@@ -60,6 +60,8 @@ class Primitive {
                                             MemoryArena &arena,
                                             TransportMode mode,
                                             bool allowMultipleLobes) const = 0;
+	virtual void initSAHCost() const = 0;
+	virtual int ComputeSAHCost(std::pair<double, double> & sah_sa) const = 0;
 };
 
 // GeometricPrimitive Declarations
@@ -82,6 +84,8 @@ class GeometricPrimitive : public Primitive {
     void ComputeScatteringFunctions(SurfaceInteraction *isect,
                                     MemoryArena &arena, TransportMode mode,
                                     bool allowMultipleLobes) const;
+	virtual void initSAHCost() const {};
+	virtual int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 
   private:
     // GeometricPrimitive Private Data
@@ -112,6 +116,8 @@ class TransformedPrimitive : public Primitive {
     Bounds3f WorldBound() const {
         return PrimitiveToWorld.MotionBounds(primitive->WorldBound());
     }
+	virtual void initSAHCost() const {};
+	virtual int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 
   private:
     // TransformedPrimitive Private Data

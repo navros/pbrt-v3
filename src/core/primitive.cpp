@@ -39,6 +39,9 @@
 
 namespace pbrt {
 
+STAT_COUNTER("SAH/primitives - Geometric", sah_GeometricPrimitives);
+STAT_COUNTER("SAH/primitives - Transformed", sah_TransformedPrimitives);
+
 // Primitive Method Definitions
 Primitive::~Primitive() {}
 const AreaLight *Aggregate::GetAreaLight() const {
@@ -126,6 +129,25 @@ void GeometricPrimitive::ComputeScatteringFunctions(
         material->ComputeScatteringFunctions(isect, arena, mode,
                                              allowMultipleLobes);
     CHECK_GE(Dot(isect->n, isect->shading.n), 0.);
+}
+
+int GeometricPrimitive::ComputeSAHCost(std::pair<double, double> & sah_sa) const {
+	sah_GeometricPrimitives++;
+	return 1;
+}
+
+int TransformedPrimitive::ComputeSAHCost(std::pair<double, double> & sah_sa) const {
+	sah_TransformedPrimitives++;
+	Transform InterpolatedPrimToWorld;
+	PrimitiveToWorld.Interpolate(.0, &InterpolatedPrimToWorld);
+	std::pair<double, double> current_sah = std::pair<double, double>(0, 0);
+	//auto ratio = PrimitiveToWorld.MotionBounds(primitive->WorldBound()).SurfaceArea() / primitive->WorldBound().SurfaceArea();
+	auto ratio = InterpolatedPrimToWorld(primitive->WorldBound()).SurfaceArea() / primitive->WorldBound().SurfaceArea();
+	if (primitive->ComputeSAHCost(current_sah) > 0)
+		current_sah.second += primitive->WorldBound().SurfaceArea();
+	sah_sa.first += current_sah.first * ratio;
+	sah_sa.second += current_sah.second * ratio;
+	return 0;
 }
 
 }  // namespace pbrt

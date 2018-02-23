@@ -113,6 +113,15 @@ void StatsAccumulator::Print(FILE *dest) {
         toPrint[category].push_back(StringPrintf(
             "%-42s               %12" PRIu64, title.c_str(), counter.second));
     }
+	for (auto &rootSurface : sahCostRoot) {
+		const std::string &name = rootSurface.first;
+		if (rootSurface.second == 0 || sahCostInner[name] == 0 || sahCostLeaves[name] == 0) continue;
+		std::string category, title;
+		getCategoryAndTitle(rootSurface.first, &category, &title);
+		double sah_cost = (3.0 * sahCostInner[name] + 2.0 * sahCostLeaves[name]) / rootSurface.second;
+		toPrint[category].push_back(StringPrintf(
+			"%-42s               %12.2f ", title.c_str(), sah_cost));
+	}
     for (auto &counter : memoryCounters) {
         if (counter.second == 0) continue;
         std::string category, title;
@@ -207,6 +216,8 @@ static std::atomic<bool> profilerRunning{false};
 void InitProfiler() {
     CHECK(!profilerRunning);
 
+	std::cout << "Init Profiler" << std::endl;
+
     // Access the per-thread ProfilerState variable now, so that there's no
     // risk of its first access being in the signal handler (which in turn
     // would cause dynamic memory allocation, which is illegal in a signal
@@ -218,6 +229,7 @@ void InitProfiler() {
     profileStartTime = std::chrono::system_clock::now();
 // Set timer to periodically interrupt the system for profiling
 #ifdef PBRT_HAVE_ITIMER
+	std::cout << "Have TIMER" << std::endl;
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = ReportProfileSample;

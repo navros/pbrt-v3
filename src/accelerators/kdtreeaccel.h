@@ -57,6 +57,8 @@ class KdTreeAccel : public Aggregate {
     ~KdTreeAccel();
     bool Intersect(const Ray &ray, SurfaceInteraction *isect) const;
     bool IntersectP(const Ray &ray) const;
+	void initSAHCost() const {}
+	int ComputeSAHCost(std::pair<double, double> & sah_sa) const { return 0; };
 
   private:
     // KdTreeAccel Private Methods

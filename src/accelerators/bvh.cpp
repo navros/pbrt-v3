@@ -46,6 +46,16 @@ STAT_RATIO("BVH/Primitives per leaf node", totalPrimitives, totalLeafNodes);
 STAT_COUNTER("BVH/Interior nodes", interiorNodes);
 STAT_COUNTER("BVH/Leaf nodes", leafNodes);
 
+STAT_COUNTER("BVH/Build time", buildTime);
+STAT_SAH_COST("SAH/SAH cost", surfaceRoot, innerSAHArea, leafSAHArea);
+STAT_COUNTER("SAH/primitives - Aggregate", primitives_aggregate);
+STAT_COUNTER("SAH/nodes - Interior", sah_interiorNodes3);
+STAT_COUNTER("SAH/nodes - Leaf", sah_leafNodes3);
+STAT_COUNTER("SAH/nodes - Leaf-hybrid", sah_leafHybridNodes3);
+STAT_COUNTER("SAH/nodes - total", bvh_nodesTotal);
+
+
+
 // BVHAccel Local Declarations
 struct BVHPrimitiveInfo {
     BVHPrimitiveInfo() {}
@@ -187,6 +197,7 @@ BVHAccel::BVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
       primitives(p) {
     ProfilePhase _(Prof::AccelConstruction);
     if (primitives.empty()) return;
+	std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
     // Build BVH from _primitives_
 
     // Initialize _primitiveInfo_ array for primitives
@@ -196,7 +207,7 @@ BVHAccel::BVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
 
     // Build BVH tree for primitives using _primitiveInfo_
     MemoryArena arena(1024 * 1024);
-    int totalNodes = 0;
+    totalNodes = 0;
     std::vector<std::shared_ptr<Primitive>> orderedPrims;
     orderedPrims.reserve(primitives.size());
     BVHBuildNode *root;
@@ -219,6 +230,52 @@ BVHAccel::BVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
     int offset = 0;
     flattenBVHTree(root, &offset);
     CHECK_EQ(totalNodes, offset);
+	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+	buildTime += std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+}
+
+void BVHAccel::initSAHCost() const {
+	// SAH cost
+	bvh_nodesTotal = 1;
+	std::pair<double, double> sah_sa = std::pair<double, double>(0, 0);
+	ComputeSAHCost(sah_sa);
+	surfaceRoot = WorldBound().SurfaceArea();
+	innerSAHArea = sah_sa.first;
+	leafSAHArea = sah_sa.second;
+}
+
+int BVHAccel::ComputeSAHCost(std::pair<double, double> & sah_sa) const {
+	primitives_aggregate++;
+	bvh_nodesTotal += totalNodes - 1;
+
+	for (size_t i = 0; i < totalNodes; i++) {
+		if (nodes[i].nPrimitives == 0) {
+			// interior node
+			sah_interiorNodes3++;
+			sah_sa.first += nodes[i].bounds.SurfaceArea();
+		}
+		else {
+			// leaf
+			int truePrimitives = 0;
+			Bounds3f leafBounds;
+			for (size_t j = nodes[i].primitivesOffset; j < nodes[i].primitivesOffset + nodes[i].nPrimitives; j++){
+				if (primitives[j]->ComputeSAHCost(sah_sa) > 0) {
+					if (truePrimitives == 0)
+						leafBounds = primitives[j]->WorldBound();
+					else
+						leafBounds = Union(leafBounds, primitives[j]->WorldBound());
+					truePrimitives++;
+				}
+			}
+			if (truePrimitives > 0)
+				sah_sa.second += truePrimitives * leafBounds.SurfaceArea();
+			if (truePrimitives != nodes[i].nPrimitives)
+				sah_leafHybridNodes3++;
+			else
+				sah_leafNodes3++;
+		}
+	}
+	return 0;
 }
 
 Bounds3f BVHAccel::WorldBound() const {

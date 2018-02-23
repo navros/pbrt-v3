@@ -65,6 +65,8 @@ class BVHAccel : public Aggregate {
     ~BVHAccel();
     bool Intersect(const Ray &ray, SurfaceInteraction *isect) const;
     bool IntersectP(const Ray &ray) const;
+	void initSAHCost() const;
+	int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 
   private:
     // BVHAccel Private Methods
@@ -88,6 +90,7 @@ class BVHAccel : public Aggregate {
     int flattenBVHTree(BVHBuildNode *node, int *offset);
 
     // BVHAccel Private Data
+	int totalNodes;
     const int maxPrimsInNode;
     const SplitMethod splitMethod;
     std::vector<std::shared_ptr<Primitive>> primitives;

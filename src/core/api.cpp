@@ -642,8 +642,10 @@ std::shared_ptr<Primitive> MakeAccelerator(
     const std::vector<std::shared_ptr<Primitive>> &prims,
     const ParamSet &paramSet) {
     std::shared_ptr<Primitive> accel;
-    if (name == "bvh")
-        accel = CreateBVHAccelerator(prims, paramSet);
+	if (name == "bvh") {
+		accel = CreateBVHAccelerator(prims, paramSet);
+		accel->initSAHCost();
+	}
     else if (name == "kdtree")
         accel = CreateKdTreeAccelerator(prims, paramSet);
     else

@@ -115,6 +115,11 @@ class StatsAccumulator {
         ratios[name].first += num;
         ratios[name].second += denom;
     }
+	void ReportCounterSAHCost(const std::string &name, double root, double inner, double leaves) {
+		sahCostRoot[name] += root;
+		sahCostInner[name] += inner;
+		sahCostLeaves[name] += leaves;
+	}
 
     void Print(FILE *file);
     void Clear();
@@ -133,6 +138,9 @@ class StatsAccumulator {
     std::map<std::string, double> floatDistributionMaxs;
     std::map<std::string, std::pair<int64_t, int64_t>> percentages;
     std::map<std::string, std::pair<int64_t, int64_t>> ratios;
+	std::map<std::string, double> sahCostRoot;
+	std::map<std::string, double> sahCostInner;
+	std::map<std::string, double> sahCostLeaves;
 };
 
 enum class Prof {
@@ -290,6 +298,17 @@ void CleanupProfiler();
         var = 0;                                           \
     }                                                      \
     static StatRegisterer STATS_REG##var(STATS_FUNC##var)
+#define STAT_SAH_COST(title, rootSurface, innerSurface, leavesSurface) \
+    static PBRT_THREAD_LOCAL double rootSurface;           \
+	static PBRT_THREAD_LOCAL double innerSurface;          \
+	static PBRT_THREAD_LOCAL double leavesSurface;         \
+    static void STATS_FUNC##rootSurface(StatsAccumulator &accum) { \
+        accum.ReportCounterSAHCost(title, rootSurface, innerSurface, leavesSurface); \
+        rootSurface = 0;                                   \
+		innerSurface = 0;                                  \
+		leavesSurface = 0;                                 \
+    }                                                      \
+    static StatRegisterer STATS_REG##rootSurface(STATS_FUNC##rootSurface)
 
 #ifndef PBRT_HAVE_CONSTEXPR
 #define STATS_INT64_T_MIN LLONG_MAX
