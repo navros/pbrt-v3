@@ -53,7 +53,7 @@ class SPPMIntegrator : public Integrator {
     SPPMIntegrator(std::shared_ptr<const Camera> &camera, int nIterations,
                    int photonsPerIteration, int maxDepth,
                    Float initialSearchRadius, int writeFrequency)
-        : camera(camera),
+        : Integrator(camera),
           initialSearchRadius(initialSearchRadius),
           nIterations(nIterations),
           maxDepth(maxDepth),
@@ -65,7 +65,6 @@ class SPPMIntegrator : public Integrator {
 
   private:
     // SPPMIntegrator Private Data
-    std::shared_ptr<const Camera> camera;
     const Float initialSearchRadius;
     const int nIterations;
     const int maxDepth;

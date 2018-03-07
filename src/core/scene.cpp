@@ -74,4 +74,11 @@ bool Scene::IntersectTr(Ray ray, Sampler &sampler, SurfaceInteraction *isect,
     }
 }
 
+void Scene::Optimize() {
+	aggregate->Optimize();
+}
+void Scene::ComputeSAHCost() {
+	aggregate->initSAHCost();
+}
+
 }  // namespace pbrt

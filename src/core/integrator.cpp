@@ -50,6 +50,9 @@ STAT_COUNTER("Integrator/Camera rays traced", nCameraRays);
 // Integrator Method Definitions
 Integrator::~Integrator() {}
 
+bool Integrator::skipSamples = false;
+int Integrator::logging_samples = 1;
+
 // Integrator Utility Functions
 Spectrum UniformSampleAllLights(const Interaction &it, const Scene &scene,
                                 MemoryArena &arena, Sampler &sampler,
@@ -273,10 +276,19 @@ void SamplerIntegrator::Render(const Scene &scene) {
                 if (!InsideExclusive(pixel, pixelBounds))
                     continue;
 
+				int logging_sample_index = 0;
+
                 do {
-                    // Initialize _CameraSample_ for current sample
+					if (Integrator::skipSamples && logging_sample_index++ < Integrator::logging_samples)
+						continue;
+
+					// Initialize _CameraSample_ for current sample
                     CameraSample cameraSample =
                         tileSampler->GetCameraSample(pixel);
+
+					// if logging phase for optimization
+					//if (Integrator::skipSamples && logging_sample_index++ < Integrator::logging_samples)
+					//	continue;
 
                     // Generate camera ray for current sample
                     RayDifferential ray;

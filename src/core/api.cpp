@@ -158,6 +158,7 @@ struct TransformSet {
 struct RenderOptions {
     // RenderOptions Public Methods
     Integrator *MakeIntegrator() const;
+	Integrator *MakeLoggingIntegrator(int logging_samples, std::shared_ptr<const Camera> camera) const;
     Scene *MakeScene();
     Camera *MakeCamera() const;
 
@@ -643,10 +644,10 @@ std::shared_ptr<Primitive> MakeAccelerator(
     const std::vector<std::shared_ptr<Primitive>> &prims,
     const ParamSet &paramSet) {
     std::shared_ptr<Primitive> accel;
-	if (name == "bvh") {
+	if (name == "nbvh")
+		accel = CreateNBVHAccelerator(prims, paramSet);
+	else if (name == "bvh")
 		accel = CreateBVHAccelerator(prims, paramSet);
-		accel->initSAHCost();
-	}
     else if (name == "kdtree")
         accel = CreateKdTreeAccelerator(prims, paramSet);
     else
@@ -1382,7 +1383,19 @@ void pbrtWorldEnd() {
     if (PbrtOptions.cat || PbrtOptions.toPly) {
         printf("%*sWorldEnd\n", catIndentCount, "");
     } else {
-        std::unique_ptr<Integrator> integrator(renderOptions->MakeIntegrator());
+		std::unique_ptr<Integrator> integrator(renderOptions->MakeIntegrator());
+		std::unique_ptr<Integrator> logging_integrator = nullptr;
+		bool optimize = false;
+		if (renderOptions->AcceleratorName == "nbvh") {
+			optimize = renderOptions->AcceleratorParams.FindOneBool("optimize", true);
+			if (optimize) {
+				int logging_samples = renderOptions->AcceleratorParams.FindOneInt("logging samples", 1);
+				std::cout << "samples = " << logging_samples << std::endl;
+				logging_integrator.reset(
+					renderOptions->MakeLoggingIntegrator(logging_samples,
+						integrator ? integrator->GetCamera() : nullptr));
+			}
+		}
         std::unique_ptr<Scene> scene(renderOptions->MakeScene());
 
         // This is kind of ugly; we directly override the current profiler
@@ -1394,7 +1407,21 @@ void pbrtWorldEnd() {
         CHECK_EQ(CurrentProfilerState(), ProfToBits(Prof::SceneConstruction));
         ProfilerState = ProfToBits(Prof::IntegratorRender);
 
-        if (scene && integrator) integrator->Render(*scene);
+		if (scene && integrator) {
+			Integrator::skipSamples = false;
+			if (logging_integrator && optimize) {
+				// Gather camera specific sample data - logging
+				bool logging = renderOptions->AcceleratorParams.FindOneBool("logging", true); // TODO remove - temporary for better testing
+				if (logging) {
+					logging_integrator->Render(*scene);
+					Integrator::skipSamples = true;
+				}
+				scene->Optimize(); // even withou logging integrator -> at least SA optimization and switch to regular interection function... later put down
+			}
+			scene->ComputeSAHCost();
+
+			integrator->Render(*scene);
+		}
 
         CHECK_EQ(CurrentProfilerState(), ProfToBits(Prof::IntegratorRender));
         ProfilerState = ProfToBits(Prof::SceneConstruction);
@@ -1488,6 +1515,66 @@ Integrator *RenderOptions::MakeIntegrator() const {
             "No light sources defined in scene; "
             "rendering a black image.");
     return integrator;
+}
+
+Integrator *RenderOptions::MakeLoggingIntegrator(int logging_samples, std::shared_ptr<const Camera> camera) const {
+	if (!camera)
+		return nullptr;
+
+	ParamSet loggingParamSet(SamplerParams);
+	std::unique_ptr<int[]> ls(new int(logging_samples));
+	Integrator::logging_samples = logging_samples;
+	loggingParamSet.AddInt("pixelsamples", std::move(ls), 1);
+
+	std::shared_ptr<Sampler> sampler =
+		MakeSampler(SamplerName, loggingParamSet, camera->film);
+	if (!sampler) {
+		Error("Unable to create sampler.");
+		return nullptr;
+	}
+
+	Integrator *integrator = nullptr;
+	if (IntegratorName == "whitted")
+		integrator = CreateWhittedIntegrator(IntegratorParams, sampler, camera);
+	else if (IntegratorName == "directlighting")
+		integrator =
+		CreateDirectLightingIntegrator(IntegratorParams, sampler, camera);
+	else if (IntegratorName == "path")
+		integrator = CreatePathIntegrator(IntegratorParams, sampler, camera);
+	else if (IntegratorName == "volpath")
+		integrator = CreateVolPathIntegrator(IntegratorParams, sampler, camera);
+	else if (IntegratorName == "bdpt") {
+		integrator = CreateBDPTIntegrator(IntegratorParams, sampler, camera);
+	}
+	else if (IntegratorName == "mlt") {
+		integrator = CreateMLTIntegrator(IntegratorParams, camera);
+	}
+	else if (IntegratorName == "ambientocclusion") {
+		integrator = CreateAOIntegrator(IntegratorParams, sampler, camera);
+	}
+	else if (IntegratorName == "sppm") {
+		integrator = CreateSPPMIntegrator(IntegratorParams, camera);
+	}
+	else {
+		Error("Integrator \"%s\" unknown.", IntegratorName.c_str());
+		return nullptr;
+	}
+
+	if (renderOptions->haveScatteringMedia && IntegratorName != "volpath" &&
+		IntegratorName != "bdpt" && IntegratorName != "mlt") {
+		Warning(
+			"Scene has scattering media but \"%s\" integrator doesn't support "
+			"volume scattering. Consider using \"volpath\", \"bdpt\", or "
+			"\"mlt\".", IntegratorName.c_str());
+	}
+
+	IntegratorParams.ReportUnused();
+	// Warn if no light sources are defined
+	if (lights.empty())
+		Warning(
+			"No light sources defined in scene; "
+			"rendering a black image.");
+	return integrator;
 }
 
 Camera *RenderOptions::MakeCamera() const {

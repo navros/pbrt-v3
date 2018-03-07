@@ -50,6 +50,7 @@ struct BVHBuildNode;
 struct BVHPrimitiveInfo;
 struct MortonPrimitive;
 struct LinearBVHNode;
+struct PairHeapCompare;
 
 // NBVHAccel Declarations
 class NBVHAccel : public Aggregate {
@@ -67,6 +68,13 @@ class NBVHAccel : public Aggregate {
     bool IntersectP(const Ray &ray) const;
 	void initSAHCost() const;
 	int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
+	void Optimize();
+
+	// make hits as float (for direct fraction use during computation) is no good (incementing +1 have no effect for number >= 2^24)
+	static std::atomic<int64_t> shadowRays;		// amount of shadow rays cast in logging
+	static std::vector<int64_t> hitsNodeS;		// node shadow ray hits 
+	static std::vector<int64_t> hitsPrimitiveS;
+	static std::vector<int64_t> hitsNodeR;		// node regular ray hits
 
   private:
     // NBVHAccel Private Methods
@@ -87,14 +95,27 @@ class NBVHAccel : public Aggregate {
     BVHBuildNode *buildUpperSAH(MemoryArena &arena,
                                 std::vector<BVHBuildNode *> &treeletRoots,
                                 int start, int end, int *totalNodes) const;
-    int flattenBVHTree(BVHBuildNode *node, int *offset);
+    void flattenNBVHTree(BVHBuildNode *node, int nodeOffset, int *offset);
+
+	typedef bool (NBVHAccel::*ShadowIntersection)(const Ray &ray) const;
+	typedef bool (NBVHAccel::*RegularIntersection)(const Ray &ray, SurfaceInteraction *isect) const;
+	ShadowIntersection usedIntersectionP;
+	RegularIntersection usedIntersection;
+	bool IntersectPRegular(const Ray &ray) const;
+	bool IntersectPLogging(const Ray &ray) const;
+	bool IntersectRegular(const Ray &ray, SurfaceInteraction *isect) const;
+	bool IntersectLogging(const Ray &ray, SurfaceInteraction *isect) const;
+	void AddChildrenContract(std::vector< std::pair<int, float> > &childrenOffsets, int buildNodeOffset);
+	int64_t Contract(int buildNodeOffset, int nodeOffset, int *offset, float &cost);
 
     // NBVHAccel Private Data
 	int totalNodes;
+	int totalNodesOptimized;
     const int maxPrimsInNode;
     const SplitMethod splitMethod;
     std::vector<std::shared_ptr<Primitive>> primitives;
     LinearBVHNode *nodes = nullptr;
+	LinearBVHNode *nodesBuild = nullptr;
 };
 
 std::shared_ptr<NBVHAccel> CreateNBVHAccelerator(

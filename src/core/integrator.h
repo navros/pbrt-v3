@@ -53,8 +53,19 @@ namespace pbrt {
 class Integrator {
   public:
     // Integrator Interface
+	Integrator() {}
+	Integrator(std::shared_ptr<const Camera> camera) : camera(camera) {}
     virtual ~Integrator();
     virtual void Render(const Scene &scene) = 0;
+	virtual std::shared_ptr<const Camera> GetCamera() { return camera; }
+
+	// static variables
+	static bool skipSamples;
+	static int logging_samples;
+
+  protected:
+	// Integrator Protected Data
+	std::shared_ptr<const Camera> camera;
 };
 
 Spectrum UniformSampleAllLights(const Interaction &it, const Scene &scene,
@@ -80,7 +91,7 @@ class SamplerIntegrator : public Integrator {
     SamplerIntegrator(std::shared_ptr<const Camera> camera,
                       std::shared_ptr<Sampler> sampler,
                       const Bounds2i &pixelBounds)
-        : camera(camera), sampler(sampler), pixelBounds(pixelBounds) {}
+        : Integrator(camera), sampler(sampler), pixelBounds(pixelBounds) {}
     virtual void Preprocess(const Scene &scene, Sampler &sampler) {}
     void Render(const Scene &scene);
     virtual Spectrum Li(const RayDifferential &ray, const Scene &scene,
@@ -94,10 +105,6 @@ class SamplerIntegrator : public Integrator {
                               const SurfaceInteraction &isect,
                               const Scene &scene, Sampler &sampler,
                               MemoryArena &arena, int depth) const;
-
-  protected:
-    // SamplerIntegrator Protected Data
-    std::shared_ptr<const Camera> camera;
 
   private:
     // SamplerIntegrator Private Data

@@ -60,6 +60,7 @@ class Primitive {
                                             MemoryArena &arena,
                                             TransportMode mode,
                                             bool allowMultipleLobes) const = 0;
+	virtual void Optimize() = 0;
 	virtual void initSAHCost() const = 0;
 	virtual int ComputeSAHCost(std::pair<double, double> & sah_sa) const = 0;
 };
@@ -84,6 +85,7 @@ class GeometricPrimitive : public Primitive {
     void ComputeScatteringFunctions(SurfaceInteraction *isect,
                                     MemoryArena &arena, TransportMode mode,
                                     bool allowMultipleLobes) const;
+	void Optimize() {}
 	virtual void initSAHCost() const {};
 	virtual int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 
@@ -116,6 +118,7 @@ class TransformedPrimitive : public Primitive {
     Bounds3f WorldBound() const {
         return PrimitiveToWorld.MotionBounds(primitive->WorldBound());
     }
+	void Optimize() {}
 	virtual void initSAHCost() const {};
 	virtual int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 
@@ -134,6 +137,7 @@ class Aggregate : public Primitive {
     void ComputeScatteringFunctions(SurfaceInteraction *isect,
                                     MemoryArena &arena, TransportMode mode,
                                     bool allowMultipleLobes) const;
+	void Optimize() {}
 };
 
 }  // namespace pbrt

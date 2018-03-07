@@ -46,12 +46,19 @@ STAT_RATIO("BVH/Primitives per leaf node", totalPrimitives, totalLeafNodes);
 STAT_COUNTER("BVH/Interior nodes", interiorNodes);
 STAT_COUNTER("BVH/Leaf nodes", leafNodes);
 
+STAT_COUNTER("BVH_cout/Traversation steps", traversationSteps);
+STAT_COUNTER("BVH_cout/Intersection tests", intersectTests);
+STAT_COUNTER("BVH_cout/Traversation steps shadow", traversationStepsShadow);
+STAT_COUNTER("BVH_cout/Intersection tests shadow", intersectTestsShadow);
+STAT_COUNTER("BVH_cout/Traversation steps regular", traversationStepsRegular);
+STAT_COUNTER("BVH_cout/Intersection tests regular", intersectTestsRegular);
+
 STAT_COUNTER("BVH/Build time", buildTime);
 STAT_SAH_COST("SAH/SAH cost", surfaceRoot, innerSAHArea, leafSAHArea);
 STAT_COUNTER("SAH/primitives - Aggregate", primitives_aggregate);
-STAT_COUNTER("SAH/nodes - Interior", sah_interiorNodes3);
-STAT_COUNTER("SAH/nodes - Leaf", sah_leafNodes3);
-STAT_COUNTER("SAH/nodes - Leaf-hybrid", sah_leafHybridNodes3);
+STAT_COUNTER("SAH/nodes - Interior", sah_interiorNodes);
+STAT_COUNTER("SAH/nodes - Leaf", sah_leafNodes);
+STAT_COUNTER("SAH/nodes - Leaf-hybrid", sah_leafHybridNodes);
 STAT_COUNTER("SAH/nodes - total", bvh_nodesTotal);
 
 
@@ -251,7 +258,7 @@ int BVHAccel::ComputeSAHCost(std::pair<double, double> & sah_sa) const {
 	for (size_t i = 0; i < totalNodes; i++) {
 		if (nodes[i].nPrimitives == 0) {
 			// interior node
-			sah_interiorNodes3++;
+			sah_interiorNodes++;
 			sah_sa.first += nodes[i].bounds.SurfaceArea();
 		}
 		else {
@@ -270,9 +277,9 @@ int BVHAccel::ComputeSAHCost(std::pair<double, double> & sah_sa) const {
 			if (truePrimitives > 0)
 				sah_sa.second += truePrimitives * leafBounds.SurfaceArea();
 			if (truePrimitives != nodes[i].nPrimitives)
-				sah_leafHybridNodes3++;
+				sah_leafHybridNodes++;
 			else
-				sah_leafNodes3++;
+				sah_leafNodes++;
 		}
 	}
 	return 0;
@@ -724,10 +731,14 @@ bool BVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const {
     int nodesToVisit[64];
     while (true) {
         const LinearBVHNode *node = &nodes[currentNodeIndex];
+		++traversationSteps;
+		++traversationStepsRegular;
         // Check ray against BVH node
         if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
             if (node->nPrimitives > 0) {
                 // Intersect ray with primitives in leaf BVH node
+				intersectTests += node->nPrimitives;
+				intersectTestsRegular += node->nPrimitives;
                 for (int i = 0; i < node->nPrimitives; ++i)
                     if (primitives[node->primitivesOffset + i]->Intersect(
                             ray, isect))
@@ -762,10 +773,14 @@ bool BVHAccel::IntersectP(const Ray &ray) const {
     int toVisitOffset = 0, currentNodeIndex = 0;
     while (true) {
         const LinearBVHNode *node = &nodes[currentNodeIndex];
+		++traversationSteps;
+		++traversationStepsShadow;
         if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
             // Process BVH node _node_ for traversal
             if (node->nPrimitives > 0) {
                 for (int i = 0; i < node->nPrimitives; ++i) {
+					++intersectTests;
+					++intersectTestsShadow;
                     if (primitives[node->primitivesOffset + i]->IntersectP(
                             ray)) {
                         return true;

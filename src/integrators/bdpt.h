@@ -133,7 +133,7 @@ class BDPTIntegrator : public Integrator {
                    const Bounds2i &pixelBounds,
                    const std::string &lightSampleStrategy = "power")
         : sampler(sampler),
-          camera(camera),
+          Integrator(camera),
           maxDepth(maxDepth),
           visualizeStrategies(visualizeStrategies),
           visualizeWeights(visualizeWeights),
@@ -144,7 +144,6 @@ class BDPTIntegrator : public Integrator {
   private:
     // BDPTIntegrator Private Data
     std::shared_ptr<Sampler> sampler;
-    std::shared_ptr<const Camera> camera;
     const int maxDepth;
     const bool visualizeStrategies;
     const bool visualizeWeights;
