@@ -65,6 +65,7 @@ STAT_COUNTER("BVH_logging/Otptimization time", optimizeTime);
 STAT_COUNTER("BVH_logging/shadow rays", logging_shadowRays);
 STAT_COUNTER("BVH_logging/traversations count", logging_traversations);
 STAT_COUNTER("BVH_logging/traversations count shadow", logging_traversationsShadow);
+STAT_COUNTER("BVH_logging/traversations count regular", logging_traversationsRegular);
 STAT_COUNTER("BVH_logging/primitive intersect tests", logging_primitivesTests);
 STAT_COUNTER("BVH_logging/contracted nodes", logging_contractedNodes);
 STAT_COUNTER("BVH_logging/swapped nodes", logging_swappedNodes);
@@ -72,11 +73,6 @@ STAT_COUNTER("BVH_logging/swapped primitives", logging_swappedPrimitives);
 
 #define MAX_CHILDREN 65535
 #define VISIT_THRESHOLD 20 //temporary.. TODO
-
-std::atomic<int64_t> NBVHAccel::shadowRays;
-std::vector<int64_t> NBVHAccel::hitsNodeS;
-std::vector<int64_t> NBVHAccel::hitsNodeR;
-std::vector<int64_t> NBVHAccel::hitsPrimitiveS;
 
 // NBVHAccel Local Declarations
 struct BVHPrimitiveInfo {
@@ -222,7 +218,7 @@ static void RadixSort(std::vector<MortonPrimitive> *v) {
 
 // NBVHAccel Method Definitions
 NBVHAccel::NBVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
-                   int maxPrimsInNode, SplitMethod splitMethod)
+                   int maxPrimsInNode, SplitMethod splitMethod, bool logging)
     : maxPrimsInNode(std::min(255, maxPrimsInNode)),
       splitMethod(splitMethod),
       primitives(p) {
@@ -263,14 +259,19 @@ NBVHAccel::NBVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
     CHECK_EQ(totalNodes, offset+1);
 
 	// logging arrays
-	// TODO remake from static + optimaze lower level BVHs if instances are used
 	totalNodesOptimized = totalNodes;
-	shadowRays = 0;
-	hitsNodeS.resize(totalNodes, 0);
-	hitsNodeR.resize(totalNodes, 0);
-	hitsPrimitiveS.resize(primitives.size(), 0);
-	usedIntersectionP = &NBVHAccel::IntersectPLogging;
-	usedIntersection = &NBVHAccel::IntersectLogging;
+	logging_shadowRays = 0;
+	if (logging || true) { // ..TODO hitArrays independent Optimize if no logging
+		hitsNodeS.resize(totalNodes, 0);
+		hitsNodeR.resize(totalNodes, 0);
+		hitsPrimitiveS.resize(primitives.size(), 0);
+		usedIntersectionP = &NBVHAccel::IntersectPLogging;
+		usedIntersection = &NBVHAccel::IntersectLogging;
+	}
+	else {
+		usedIntersectionP = &NBVHAccel::IntersectPRegular;
+		usedIntersection = &NBVHAccel::IntersectRegular;
+	}
 
 	std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
 	buildTime += std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
@@ -330,9 +331,9 @@ void NBVHAccel::Optimize() {
 	std::chrono::system_clock::time_point start = std::chrono::system_clock::now();
 	logging_traversations = traversationSteps;
 	logging_traversationsShadow = traversationStepsShadow;
+	logging_traversationsRegular = traversationStepsRegular;
 	logging_primitivesTests = intersectTests;
 	logging_contractedNodes = 0;
-	logging_shadowRays = shadowRays;
 	
 	nodesBuild = nodes;
 	nodes = AllocAligned<LinearBVHNode>(totalNodes);
@@ -439,12 +440,13 @@ int64_t NBVHAccel::Contract(int buildNodeOffset, int nodeOffset, int *offset, fl
 		H.reserve(childrenOffsets.size());
 		I.reserve(childrenOffsets.size());
 		C.reserve(childrenOffsets.size());
+		float parentHits = (float)hitsNodeS[buildNodeOffset];
 		for (int i = 0; i < childrenOffsets.size(); i++) {
 			// recurse
 			int64_t primitiv_hits_i = Contract(childrenOffsets[i].first, myOffset + i, offset, C[i]);
 			if (hitsNodeS[buildNodeOffset] > 0) {
-				H[i] = (float)primitiv_hits_i / (float)hitsNodeS[buildNodeOffset]; // make hits float as default is no good (incementing +1 have no effect for number >= 2^24)
-				I[i] = (float)hitsNodeS[childrenOffsets[i].first] / (float)hitsNodeS[buildNodeOffset];
+				H[i] = (float)primitiv_hits_i / parentHits;
+				I[i] = (float)hitsNodeS[childrenOffsets[i].first] / parentHits;
 				childrenOffsets[i].second = I[i] == 0.0f ? 0.0f : H[i] / (I[i]*C[i]);
 			}
 			else {
@@ -923,49 +925,54 @@ void NBVHAccel::flattenNBVHTree(BVHBuildNode *node, int nodeOffset, int *offset)
 NBVHAccel::~NBVHAccel() { FreeAligned(nodes); }
 
 bool NBVHAccel::Intersect(const Ray &ray, SurfaceInteraction *isect) const {
-	return (this->*usedIntersection)(ray, isect);
+	return (this->*usedIntersection)(this, ray, isect);
 }
 
-bool NBVHAccel::IntersectRegular(const Ray &ray, SurfaceInteraction *isect) const {
-    if (!nodes) return false;
-    ProfilePhase p(Prof::AccelIntersect);
-    bool hit = false;
-    Vector3f invDir(1 / ray.d.x, 1 / ray.d.y, 1 / ray.d.z);
-    int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
-    // Follow ray through BVH nodes to find primitive intersections
-    int toVisitOffset = -1, currentNodeIndex = 0;
-	std::pair<int, int> nodesToVisit[64]; // node offset start and nodes offset end
-    while (true) {
-        const LinearBVHNode *node = &nodes[currentNodeIndex];
+bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const {
+	// use of non-optimized BVH
+	if (!nodesBuild) return false;
+	ProfilePhase p(Prof::AccelIntersect);
+	bool hit = false;
+	Vector3f invDir(1 / ray.d.x, 1 / ray.d.y, 1 / ray.d.z);
+	int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
+	// Follow ray through BVH nodes to find primitive intersections
+	int toVisitOffset = -1, currentNodeIndex = 0;
+	int nodesToVisit[64];
+	while (true) {
+		const LinearBVHNode *node = &nodesBuild[currentNodeIndex];
 		++traversationSteps;
 		++traversationStepsRegular;//TODO will be one .. later
-        // Check ray against BVH node
-        if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
-            if (node->leaf == 1) {
-                // Intersect ray with primitives in leaf BVH node
+		// Check ray against BVH node
+		if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
+			if (node->leaf == 1) {
+				// Intersect ray with primitives in leaf BVH node
 				intersectTests += node->nPrimitives;
 				intersectTestsRegular += node->nPrimitives;
-                for (int i = 0; i < node->nPrimitives; ++i)
-                    if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
-                        hit = true;
-                if (toVisitOffset == -1) break;
-				currentNodeIndex = nodesToVisit[toVisitOffset].first++;
-				if (nodesToVisit[toVisitOffset].first == nodesToVisit[toVisitOffset].second) --toVisitOffset;
-            } else {
-				// order to visit already done by Optimize method
-				currentNodeIndex = node->childrenOffset;
-				nodesToVisit[++toVisitOffset] = std::pair<int, int>(node->childrenOffset + 1, node->childrenOffset + node->nChildren);
-            }
-        } else {
-            if (toVisitOffset == -1) break;
-			currentNodeIndex = nodesToVisit[toVisitOffset].first++;
-			if (nodesToVisit[toVisitOffset].first == nodesToVisit[toVisitOffset].second) --toVisitOffset;
-        }
-    }
-    return hit;
+				for (int i = 0; i < node->nPrimitives; ++i)
+					if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
+						hit = true;
+				if (toVisitOffset == -1) break;
+				currentNodeIndex = nodesToVisit[--toVisitOffset];
+			}
+			else {
+				if (dirIsNeg[node->axis]) {
+					nodesToVisit[toVisitOffset++] = node->childrenOffset;
+					currentNodeIndex = node->childrenOffset + 1;
+				} else {
+					nodesToVisit[toVisitOffset++] = node->childrenOffset + 1;
+					currentNodeIndex = node->childrenOffset;
+				}
+			}
+		}
+		else {
+			if (toVisitOffset == -1) break;
+			currentNodeIndex = nodesToVisit[--toVisitOffset];
+		}
+	}
+	return hit;
 }
 
-bool NBVHAccel::IntersectLogging(const Ray &ray, SurfaceInteraction *isect) const {
+bool NBVHAccel::IntersectLogging(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const {
 	// logging with binary BVH
 	if (!nodes) return false;
 	ProfilePhase p(Prof::AccelIntersect);
@@ -975,13 +982,14 @@ bool NBVHAccel::IntersectLogging(const Ray &ray, SurfaceInteraction *isect) cons
 	// Follow ray through BVH nodes to find primitive intersections
 	int toVisitOffset = -1, currentNodeIndex = 0;
 	int nodesToVisit[64];
+	auto thisBVH = const_cast<NBVHAccel*>(nbvh); // remove const in current bvh for logging
 	while (true) {
 		const LinearBVHNode *node = &nodes[currentNodeIndex];
 		++traversationSteps;
 		++traversationStepsRegular;
 		// Check ray against BVH node
 		if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
-			++hitsNodeR[currentNodeIndex];
+			//++(thisBVH->hitsNodeR[currentNodeIndex]); // TODO: check, ... delete if optimization only for shadow rays
 			if (node->leaf == 1) {
 				// Intersect ray with primitives in leaf BVH node
 				intersectTests += node->nPrimitives;
@@ -996,7 +1004,6 @@ bool NBVHAccel::IntersectLogging(const Ray &ray, SurfaceInteraction *isect) cons
 				if (dirIsNeg[node->axis]) {
                     nodesToVisit[toVisitOffset++] = node->childrenOffset;
 					currentNodeIndex = node->childrenOffset + 1;
-					
                 } else {
                     nodesToVisit[toVisitOffset++] = node->childrenOffset + 1;
                     currentNodeIndex = node->childrenOffset;
@@ -1012,10 +1019,10 @@ bool NBVHAccel::IntersectLogging(const Ray &ray, SurfaceInteraction *isect) cons
 }
 
 bool NBVHAccel::IntersectP(const Ray &ray) const {
-	return (this->*usedIntersectionP)(ray);
+	return (this->*usedIntersectionP)(this, ray);
 }
 
-bool NBVHAccel::IntersectPRegular(const Ray &ray) const{
+bool NBVHAccel::IntersectPRegular(const NBVHAccel* nbvh, const Ray &ray) const{
 	if (!nodes) return false;
 	ProfilePhase p(Prof::AccelIntersectP);
 	Vector3f invDir(1.f / ray.d.x, 1.f / ray.d.y, 1.f / ray.d.z);
@@ -1053,36 +1060,37 @@ bool NBVHAccel::IntersectPRegular(const Ray &ray) const{
 	return false;
 }
 
-bool NBVHAccel::IntersectPLogging(const Ray &ray) const{
+bool NBVHAccel::IntersectPLogging(const NBVHAccel* nbvh, const Ray &ray) const{
 	// logging with binary BVH
     if (!nodes) return false;
     ProfilePhase p(Prof::AccelIntersectP);
-	++shadowRays;
+	++logging_shadowRays;
     Vector3f invDir(1.f / ray.d.x, 1.f / ray.d.y, 1.f / ray.d.z);
     int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
 	int nodesToVisit[64];
     int toVisitOffset = -1, currentNodeIndex = 0;
+	auto thisBVH = const_cast<NBVHAccel*>(nbvh); // remove const in current bvh for logging
     while (true) {
         const LinearBVHNode *node = &nodes[currentNodeIndex];
 		++traversationSteps;
 		++traversationStepsShadow;
         if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
             // Process BVH node _node_ for traversal
-			++hitsNodeS[currentNodeIndex];
+			++(thisBVH->hitsNodeS[currentNodeIndex]);
             if (node->leaf == 1) {
                 for (int i = 0; i < node->nPrimitives; ++i) {
 					++intersectTests;
 					++intersectTestsShadow;
                     if (primitives[node->primitivesOffset + i]->IntersectP(ray)) {
-						++hitsPrimitiveS[node->primitivesOffset + i];
+						++(thisBVH->hitsPrimitiveS[node->primitivesOffset + i]);
                         return true;
                     }
                 }
 				if (toVisitOffset == -1) break;
 				currentNodeIndex = nodesToVisit[--toVisitOffset];
 			} else {
-				// TODO random shuffle
-				if (dirIsNeg[node->axis]) {
+				if (rand() < 0.5f * RAND_MAX) { // random shuffle
+				//if (dirIsNeg[node->axis]) {
                     /// second child first
                     nodesToVisit[toVisitOffset++] = node->childrenOffset;
 					currentNodeIndex = node->childrenOffset + 1;
@@ -1104,6 +1112,7 @@ bool NBVHAccel::IntersectPLogging(const Ray &ray) const{
 std::shared_ptr<NBVHAccel> CreateNBVHAccelerator(
     const std::vector<std::shared_ptr<Primitive>> &prims, const ParamSet &ps) {
     std::string splitMethodName = ps.FindOneString("splitmethod", "sah");
+	bool logging = ps.FindOneBool("logging", true);
     NBVHAccel::SplitMethod splitMethod;
     if (splitMethodName == "sah")
         splitMethod = NBVHAccel::SplitMethod::SAH;
@@ -1120,7 +1129,7 @@ std::shared_ptr<NBVHAccel> CreateNBVHAccelerator(
     }
 
     int maxPrimsInNode = ps.FindOneInt("maxnodeprims", 4);
-    return std::make_shared<NBVHAccel>(prims, maxPrimsInNode, splitMethod);
+    return std::make_shared<NBVHAccel>(prims, maxPrimsInNode, splitMethod, logging);
 }
 
 }  // namespace pbrt

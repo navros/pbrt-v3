@@ -61,7 +61,8 @@ class NBVHAccel : public Aggregate {
     // NBVHAccel Public Methods
     NBVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
              int maxPrimsInNode = 1,
-             SplitMethod splitMethod = SplitMethod::SAH);
+             SplitMethod splitMethod = SplitMethod::SAH,
+			 bool logging = false);
     Bounds3f WorldBound() const;
     ~NBVHAccel();
     bool Intersect(const Ray &ray, SurfaceInteraction *isect) const;
@@ -71,10 +72,9 @@ class NBVHAccel : public Aggregate {
 	void Optimize();
 
 	// make hits as float (for direct fraction use during computation) is no good (incementing +1 have no effect for number >= 2^24)
-	static std::atomic<int64_t> shadowRays;		// amount of shadow rays cast in logging
-	static std::vector<int64_t> hitsNodeS;		// node shadow ray hits 
-	static std::vector<int64_t> hitsPrimitiveS;
-	static std::vector<int64_t> hitsNodeR;		// node regular ray hits
+	std::vector<int64_t> hitsNodeS;		// node shadow ray hits 
+	std::vector<int64_t> hitsPrimitiveS;
+	std::vector<int64_t> hitsNodeR;		// node regular ray hits
 
   private:
     // NBVHAccel Private Methods
@@ -97,14 +97,14 @@ class NBVHAccel : public Aggregate {
                                 int start, int end, int *totalNodes) const;
     void flattenNBVHTree(BVHBuildNode *node, int nodeOffset, int *offset);
 
-	typedef bool (NBVHAccel::*ShadowIntersection)(const Ray &ray) const;
-	typedef bool (NBVHAccel::*RegularIntersection)(const Ray &ray, SurfaceInteraction *isect) const;
+	typedef bool (NBVHAccel::*ShadowIntersection)(const NBVHAccel* nbvh, const Ray &ray) const;
+	typedef bool (NBVHAccel::*RegularIntersection)(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	ShadowIntersection usedIntersectionP;
 	RegularIntersection usedIntersection;
-	bool IntersectPRegular(const Ray &ray) const;
-	bool IntersectPLogging(const Ray &ray) const;
-	bool IntersectRegular(const Ray &ray, SurfaceInteraction *isect) const;
-	bool IntersectLogging(const Ray &ray, SurfaceInteraction *isect) const;
+	bool IntersectPRegular(const NBVHAccel* nbvh, const Ray &ray) const;
+	bool IntersectPLogging(const NBVHAccel* nbvh, const Ray &ray) const;
+	bool IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
+	bool IntersectLogging(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	void AddChildrenContract(std::vector< std::pair<int, float> > &childrenOffsets, int buildNodeOffset);
 	int64_t Contract(int buildNodeOffset, int nodeOffset, int *offset, float &cost);
 

@@ -1385,12 +1385,12 @@ void pbrtWorldEnd() {
     } else {
 		std::unique_ptr<Integrator> integrator(renderOptions->MakeIntegrator());
 		std::unique_ptr<Integrator> logging_integrator = nullptr;
-		bool optimize = false;
+		bool optimize = false, logging = false;
 		if (renderOptions->AcceleratorName == "nbvh") {
 			optimize = renderOptions->AcceleratorParams.FindOneBool("optimize", true);
-			if (optimize) {
+			logging = renderOptions->AcceleratorParams.FindOneBool("logging", true);
+			if (optimize && logging) {
 				int logging_samples = renderOptions->AcceleratorParams.FindOneInt("logging samples", 1);
-				std::cout << "samples = " << logging_samples << std::endl;
 				logging_integrator.reset(
 					renderOptions->MakeLoggingIntegrator(logging_samples,
 						integrator ? integrator->GetCamera() : nullptr));
@@ -1409,14 +1409,15 @@ void pbrtWorldEnd() {
 
 		if (scene && integrator) {
 			Integrator::skipSamples = false;
-			if (logging_integrator && optimize) {
-				// Gather camera specific sample data - logging
-				bool logging = renderOptions->AcceleratorParams.FindOneBool("logging", true); // TODO remove - temporary for better testing
-				if (logging) {
+			if (optimize) {
+				if (logging && logging_integrator) {
+					// Gather camera specific sample data - logging
 					logging_integrator->Render(*scene);
 					Integrator::skipSamples = true;
 				}
-				scene->Optimize(); // even withou logging integrator -> at least SA optimization and switch to regular interection function... later put down
+				// possible even withou logging integrator
+				// -> SA optimization (nodes contraction)
+				scene->Optimize();
 			}
 			scene->ComputeSAHCost();
 
