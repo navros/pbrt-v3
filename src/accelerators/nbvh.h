@@ -71,7 +71,8 @@ class NBVHAccel : public Aggregate {
 	int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 	void Optimize();
 
-	// make hits as float (for direct fraction use during computation) is no good (incementing +1 have no effect for number >= 2^24)
+	// make hits as float (for direct fraction use during computation) is 
+	// no good (incementing +1 have no effect for number >= 2^24)
 	std::vector<int64_t> hitsNodeS;		// node shadow ray hits 
 	std::vector<int64_t> hitsPrimitiveS;
 	std::vector<int64_t> hitsNodeR;		// node regular ray hits
@@ -105,7 +106,9 @@ class NBVHAccel : public Aggregate {
 	bool IntersectPLogging(const NBVHAccel* nbvh, const Ray &ray) const;
 	bool IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	bool IntersectLogging(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
-	void AddChildrenContract(std::vector< std::pair<int, float> > &childrenOffsets, int buildNodeOffset);
+	void AddChildrenContract(
+		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets, 
+		int buildNodeOffset, unsigned int replaceOffset);
 	int64_t Contract(int buildNodeOffset, int nodeOffset, int *offset, float &cost);
 
     // NBVHAccel Private Data
