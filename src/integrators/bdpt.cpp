@@ -359,7 +359,11 @@ void BDPTIntegrator::Render(const Scene &scene) {
                 tileSampler->StartPixel(pPixel);
                 if (!InsideExclusive(pPixel, pixelBounds))
                     continue;
+				int logging_sample_index = 0;
                 do {
+					if (Integrator::skipSamples && logging_sample_index++ < Integrator::logging_samples)
+						continue;
+
                     // Generate a single sample using BDPT
                     Point2f pFilm = (Point2f)pPixel + tileSampler->Get2D();
 

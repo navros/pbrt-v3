@@ -286,10 +286,6 @@ void SamplerIntegrator::Render(const Scene &scene) {
                     CameraSample cameraSample =
                         tileSampler->GetCameraSample(pixel);
 
-					// if logging phase for optimization
-					//if (Integrator::skipSamples && logging_sample_index++ < Integrator::logging_samples)
-					//	continue;
-
                     // Generate camera ray for current sample
                     RayDifferential ray;
                     Float rayWeight =

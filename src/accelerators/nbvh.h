@@ -57,6 +57,7 @@ class NBVHAccel : public Aggregate {
   public:
     // NBVHAccel Public Types
     enum class SplitMethod { SAH, HLBVH, Middle, EqualCounts };
+	enum class OptimizePhase { All, Contract, Reorder };
 
     // NBVHAccel Public Methods
     NBVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
@@ -69,7 +70,7 @@ class NBVHAccel : public Aggregate {
     bool IntersectP(const Ray &ray) const;
 	void initSAHCost() const;
 	int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
-	void Optimize();
+	void Optimize(int phase = 0);
 
 	// make hits as float (for direct fraction use during computation) is 
 	// no good (incementing +1 have no effect for number >= 2^24)
@@ -104,12 +105,15 @@ class NBVHAccel : public Aggregate {
 	RegularIntersection usedIntersection;
 	bool IntersectPRegular(const NBVHAccel* nbvh, const Ray &ray) const;
 	bool IntersectPLogging(const NBVHAccel* nbvh, const Ray &ray) const;
+	bool IntersectPLoggingMulti(const NBVHAccel* nbvh, const Ray &ray) const;
 	bool IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	bool IntersectLogging(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	void AddChildrenContract(
 		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets, 
 		int buildNodeOffset, unsigned int replaceOffset);
 	int64_t Contract(int buildNodeOffset, int nodeOffset, int *offset, float &cost);
+	void ContractOnly(int buildNodeOffset, int nodeOffset, int *offset);
+	int64_t SortChildren(int nodeOffset, float &cost);
 
     // NBVHAccel Private Data
 	int totalNodes;

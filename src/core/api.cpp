@@ -1385,10 +1385,11 @@ void pbrtWorldEnd() {
     } else {
 		std::unique_ptr<Integrator> integrator(renderOptions->MakeIntegrator());
 		std::unique_ptr<Integrator> logging_integrator = nullptr;
-		bool optimize = false, logging = false;
+		bool optimize = false, logging = false, dualOptimize = false;
 		if (renderOptions->AcceleratorName == "nbvh") {
 			optimize = renderOptions->AcceleratorParams.FindOneBool("optimize", true);
 			logging = renderOptions->AcceleratorParams.FindOneBool("logging", true);
+			dualOptimize = renderOptions->AcceleratorParams.FindOneBool("dualoptimize", false);
 			if (optimize && logging) {
 				int logging_samples = renderOptions->AcceleratorParams.FindOneInt("logging samples", 1);
 				logging_integrator.reset(
@@ -1412,12 +1413,30 @@ void pbrtWorldEnd() {
 			if (optimize) {
 				if (logging && logging_integrator) {
 					// Gather camera specific sample data - logging
-					logging_integrator->Render(*scene);
-					Integrator::skipSamples = true;
+					if (dualOptimize) {
+						std::cout << "OPTIMIZE : double phase" << std::endl;//TODO remove it
+						logging_integrator->Render(*scene);
+						scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::Contract));
+						logging_integrator->Render(*scene);
+						Integrator::skipSamples = true;
+						Integrator::logging_samples *= 2;
+						scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::Reorder));
+					}
+					else {
+						std::cout << "OPTIMIZE : logging + one phase" << std::endl;//TODO remove it
+						logging_integrator->Render(*scene);
+						Integrator::skipSamples = true;
+						scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::All));
+					}
 				}
-				// possible even withou logging integrator
-				// -> SA optimization (nodes contraction)
-				scene->Optimize();
+				else {
+					std::cout << "OPTIMIZE : no logging = SA" << std::endl;//TODO remove it
+					// TODO --- phase only contrtact (no swaps,...)
+
+					// possible even withou logging integrator
+					// -> SA optimization (nodes contraction)
+					scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::All));
+				}
 			}
 			scene->ComputeSAHCost();
 

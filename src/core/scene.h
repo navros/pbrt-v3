@@ -65,7 +65,7 @@ class Scene {
     bool IntersectP(const Ray &ray) const;
     bool IntersectTr(Ray ray, Sampler &sampler, SurfaceInteraction *isect,
                      Spectrum *transmittance) const;
-	void Optimize();
+	void Optimize(int phase = 0);
 	void ComputeSAHCost();
 
     // Scene Public Data

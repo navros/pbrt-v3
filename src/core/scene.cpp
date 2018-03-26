@@ -74,8 +74,8 @@ bool Scene::IntersectTr(Ray ray, Sampler &sampler, SurfaceInteraction *isect,
     }
 }
 
-void Scene::Optimize() {
-	aggregate->Optimize();
+void Scene::Optimize(int phase) {
+	aggregate->Optimize(phase);
 }
 void Scene::ComputeSAHCost() {
 	aggregate->initSAHCost();
