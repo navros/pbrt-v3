@@ -1387,10 +1387,12 @@ void pbrtWorldEnd() {
 		std::unique_ptr<Integrator> logging_integrator = nullptr;
 		bool optimize = false, logging = false, dualOptimize = false;
 		if (renderOptions->AcceleratorName == "nbvh") {
-			optimize = renderOptions->AcceleratorParams.FindOneBool("optimize", true);
+			optimize = true;
 			logging = renderOptions->AcceleratorParams.FindOneBool("logging", true);
 			dualOptimize = renderOptions->AcceleratorParams.FindOneBool("dualoptimize", false);
-			if (optimize && logging) {
+			if (!logging && dualOptimize)
+				std::cout << "Cannot dual phase optimize without logging, switched to SATC" << std::endl;
+			if (logging) {
 				int logging_samples = renderOptions->AcceleratorParams.FindOneInt("logging samples", 1);
 				logging_integrator.reset(
 					renderOptions->MakeLoggingIntegrator(logging_samples,
@@ -1414,7 +1416,7 @@ void pbrtWorldEnd() {
 				if (logging && logging_integrator) {
 					// Gather camera specific sample data - logging
 					if (dualOptimize) {
-						std::cout << "OPTIMIZE : double phase" << std::endl;//TODO remove it
+						std::cout << "OPTIMIZE : double phase" << std::endl;
 						logging_integrator->Render(*scene);
 						scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::Contract));
 						logging_integrator->Render(*scene);
@@ -1423,19 +1425,16 @@ void pbrtWorldEnd() {
 						scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::Reorder));
 					}
 					else {
-						std::cout << "OPTIMIZE : logging + one phase" << std::endl;//TODO remove it
+						std::cout << "OPTIMIZE : one phase with logging" << std::endl;
 						logging_integrator->Render(*scene);
 						Integrator::skipSamples = true;
 						scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::All));
 					}
 				}
 				else {
-					std::cout << "OPTIMIZE : no logging = SA" << std::endl;//TODO remove it
-					// TODO --- phase only contrtact (no swaps,...)
-
-					// possible even withou logging integrator
-					// -> SA optimization (nodes contraction)
-					scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::All));
+					std::cout << "OPTIMIZE : SATC (no logging)" << std::endl;
+					// only contrtaction by surface area
+					scene->Optimize(static_cast<int>(NBVHAccel::OptimizePhase::SATC));
 				}
 			}
 			scene->ComputeSAHCost();

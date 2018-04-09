@@ -62,7 +62,9 @@ bool VisibilityTester::Unoccluded(const Scene &scene) const {
 
 Spectrum VisibilityTester::Tr(const Scene &scene, Sampler &sampler) const {
     Ray ray(p0.SpawnRayTo(p1));
-    Spectrum Tr(1.f);
+	return scene.IntersectP(ray) ? Spectrum(0.0f) : Spectrum(1.0f);
+	/*
+    Spectrum Tr(1.f);	
     while (true) {
         SurfaceInteraction isect;
         bool hitSurface = scene.Intersect(ray, &isect);
@@ -78,6 +80,7 @@ Spectrum VisibilityTester::Tr(const Scene &scene, Sampler &sampler) const {
         ray = isect.SpawnRayTo(p1);
     }
     return Tr;
+	*/
 }
 
 Spectrum Light::Le(const RayDifferential &ray) const { return Spectrum(0.f); }

@@ -229,7 +229,6 @@ void InitProfiler() {
     profileStartTime = std::chrono::system_clock::now();
 // Set timer to periodically interrupt the system for profiling
 #ifdef PBRT_HAVE_ITIMER
-	std::cout << "Have TIMER" << std::endl;
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_sigaction = ReportProfileSample;

@@ -57,7 +57,7 @@ class NBVHAccel : public Aggregate {
   public:
     // NBVHAccel Public Types
     enum class SplitMethod { SAH, HLBVH, Middle, EqualCounts };
-	enum class OptimizePhase { All, Contract, Reorder };
+	enum class OptimizePhase { All, Contract, Reorder, SATC };
 
     // NBVHAccel Public Methods
     NBVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
