@@ -30,7 +30,11 @@
 
  */
 
-// core/api.cpp*
+//#define SORTING_BVH
+//#define DIRECTION_LUT
+
+
+ // core/api.cpp*
 #include "api.h"
 #include "parallel.h"
 #include "paramset.h"
@@ -40,9 +44,14 @@
 #include "medium.h"
 #include "stats.h"
 
-// API Additional Headers
+ // API Additional Headers
 #include "accelerators/bvh.h"
+#include "accelerators/qbvh.h"
+#ifdef SORTING_BVH
+#include "accelerators/nbvh_sorting.h"
+#else
 #include "accelerators/nbvh.h"
+#endif
 #include "accelerators/kdtreeaccel.h"
 #include "cameras/environment.h"
 #include "cameras/orthographic.h"
@@ -644,8 +653,15 @@ std::shared_ptr<Primitive> MakeAccelerator(
     const std::vector<std::shared_ptr<Primitive>> &prims,
     const ParamSet &paramSet) {
     std::shared_ptr<Primitive> accel;
-	if (name == "nbvh")
+	if (name == "nbvh") {
+#ifdef DIRECTION_LUT
+		// order by pre-calculated ray directions
+		accel = CreateQBVHAccelerator(prims, paramSet);
+#else
+		// order by contruction splitting axis
 		accel = CreateNBVHAccelerator(prims, paramSet);
+#endif
+	}
 	else if (name == "bvh")
 		accel = CreateBVHAccelerator(prims, paramSet);
     else if (name == "kdtree")
