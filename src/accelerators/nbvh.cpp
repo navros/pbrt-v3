@@ -68,7 +68,6 @@ STAT_COUNTER("BVH_logging/contracted nodes", logging_contractedNodes);
 STAT_COUNTER("BVH_logging/swapped nodes", logging_swappedNodes);
 STAT_COUNTER("BVH_logging/swapped primitives", logging_swappedPrimitives);
 
-#define VISIT_THRESHOLD 20 //temporary.. TODO
 #define NODE_N 4 //n-ary BVH nodes
 
 #define RANDOMIZE // random traversation order for loging logging 
@@ -78,25 +77,32 @@ STAT_COUNTER("BVH_logging/swapped primitives", logging_swappedPrimitives);
 
 #define TRAVERSE_ORDER_LUT
 
+// order by lookup table
 #define MASTER_LUT_TABLE
-//#define GLOBAL_DIR_LUT
+#define GLOBAL_DIR_LUT
 
+// order by sorting:
+#define TRAVERSE_SORTED
+#define TRAVERSE_FIRST_NEAREST
 
 /*
-const unsigned char layoutLTU[64] = {
-	// y=layout x=axes_direction
-	// 000 001 010 011 100 101 110 111
-	// order from lower significant bits to higher
-	0x6C, 0xB1, 0x72, 0xC9, 0x63, 0x8D, 0x4E, 0x39,
-	0x9C, 0xC9, 0x6C, 0xC6, 0x93, 0x39, 0x63, 0x36,
-	0xD8, 0x8D, 0xD2, 0x2D, 0x78, 0x87, 0x72, 0x27,
-	0xB4, 0x2D, 0xD8, 0x36, 0x9C, 0x27, 0x78, 0x1E,
-	0x78, 0xE1, 0x4E, 0x39, 0x6C, 0xB1, 0x4B, 0x2D,
-	0xE4, 0x39, 0x78, 0x1E, 0xB4, 0x2D, 0x6C, 0x1B,
-	0x18, 0x21, 0x12, 0x09, 0x18, 0x21, 0x12, 0x09, // 3 child node
-	0x24, 0x09, 0x18, 0x06, 0x24, 0x09, 0x18, 0x06  // 3 child node
-};
+Methods for regular intersect tests, determine order for child traversation:
+ if MASTER_LUT_TABLE: 
+	all orders in one table
+ else if GLOBAL_DIR_LUT
+	order by 2 lookup tables
+	1st - nodes "tree" traverse turns based on axis and ray dir.
+	2nd - the order based on nodes layout and 1st value
+ else if TRAVERSE_SORTED
+	order by sorting distances to BB
+ else if TRAVERSE_FIRST_NEAREST
+	first by nearest distance
+	rest by order in nodes array
+ else
+	node traversation not in table, but calculated during tree traversation
+	the order based on nodes layout and 1st value
 */
+
 const unsigned char layoutLUT[256] = {
 	// left to right order
 	0,3,2,1,  1,0,3,2,  2,0,3,1,  1,2,0,3,  3,0,2,1,  1,3,0,2,  2,3,0,1,  1,2,3,0,
@@ -387,7 +393,11 @@ NBVHAccel::NBVHAccel(const std::vector<std::shared_ptr<Primitive>> &p,
 
 							// traverse order
 							for (int childNo = 0; childNo < 4; ++childNo) {
+#ifdef TRAVERSE_ORDER_LUT
 								masterLUT[index++] = layoutLUT[orderLUTindex + childNo];
+#else
+								masterLUT[index++] = 2 * layoutLUT[orderLUTindex + childNo];
+#endif
 							}
 						}
 					}
@@ -457,7 +467,6 @@ void NBVHAccel::Optimize(int phase) {
 	logging_traversationsShadow = traversationStepsShadow;
 	logging_traversationsRegular = traversationStepsRegular;
 	
-	
 	int offset = 0;
 	float cost = 0.0f;
 
@@ -468,13 +477,19 @@ void NBVHAccel::Optimize(int phase) {
 
 		int64_t primitives_hits = Contract(0, 0, &offset, cost);
 		totalNodesOptimized = offset + 1;
-		//TODO.. decrease size by contracted nodes
 
 		hitsPrimitiveS.clear();
 		hitsNodeS.clear();
 		hitsNodeR.clear();
 		usedIntersection = &NBVHAccel::IntersectRegular;
 		usedIntersectionP = &NBVHAccel::IntersectPRegular;
+
+		// DFS tree order
+		offset = 0;
+		LinearBVHNode *nodes_tmp = nodes;
+		nodes = AllocAligned<LinearBVHNode>(totalNodesOptimized);
+		allignNBVHTree(nodes_tmp, 0, 0, &offset);
+		FreeAligned(nodes_tmp);
 	}
 	else if (static_cast<OptimizePhase>(phase) == OptimizePhase::SATC) {
 		// 1PHASE optimization without logging - by surface area
@@ -493,7 +508,7 @@ void NBVHAccel::Optimize(int phase) {
 	else {
 		// 2PHASE
 		int64_t primitives_hits = 0;
-		if (static_cast<OptimizePhase>(optimized) == OptimizePhase::Contract) {
+		if (static_cast<OptimizePhase>(phase) == OptimizePhase::Contract) {
 			nodesBuild = nodes;
 			nodes = AllocAligned<LinearBVHNode>(totalNodes);
 
@@ -505,12 +520,19 @@ void NBVHAccel::Optimize(int phase) {
 			usedIntersection = &NBVHAccel::IntersectRegular;
 			usedIntersectionP = &NBVHAccel::IntersectPLoggingMulti;
 		}
-		else if (static_cast<OptimizePhase>(optimized) == OptimizePhase::Reorder) {
+		else if (static_cast<OptimizePhase>(phase) == OptimizePhase::Reorder) {
 			//swap child nodes and primitives
 			primitives_hits = SortChildren(0, cost);
 			hitsPrimitiveS.clear();
 			hitsNodeS.clear();
 			usedIntersectionP = &NBVHAccel::IntersectPRegular;
+
+			// DFS tree order
+			offset = 0;
+			LinearBVHNode *nodes_tmp = nodes;
+			nodes = AllocAligned<LinearBVHNode>(totalNodesOptimized);
+			allignNBVHTree(nodes_tmp, 0, 0, &offset);
+			FreeAligned(nodes_tmp);
 		}
 	}
 
@@ -546,9 +568,45 @@ void NBVHAccel::AddChildrenContract(
 					/ (float)(hitsNodeS[buildNodeOffset] + hitsNodeR[buildNodeOffset]);
 			}
 		}
+
+		// insert to heap
 		childrenOffsets.push_back(std::tuple<int, float, unsigned int>(
 			node->childrenOffset + i, probability, nodeOffset));
 		std::push_heap(childrenOffsets.begin(), childrenOffsets.end(), PairHeapCompare()); // heapify
+	}
+}
+
+void NBVHAccel::AddChildrenContractSorted(
+	std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets,
+	int buildNodeOffset,
+	unsigned int replaceOffset) {
+	// insert children offsets with calculated hit probability
+	LinearBVHNode* node = &nodesBuild[buildNodeOffset];
+	unsigned int nodeOffset;
+	float probability;
+	for (int i = 0; i < node->nChildren; i++) {
+		nodeOffset = i == 0 ? replaceOffset : childrenOffsets.size();
+		probability = 0.0f;
+		if (nodesBuild[node->childrenOffset + i].childOrder > 0) {
+			// set node contraction probability
+			if (static_cast<OptimizePhase>(optimized) == OptimizePhase::SATC) {
+				// Surface Area Tree Contraction (no logging phase)
+				probability = nodesBuild[node->childrenOffset + i].bounds.SurfaceArea()
+					/ nodesBuild[buildNodeOffset].bounds.SurfaceArea();
+			}
+			else if (hitsNodeS[node->childrenOffset + i] + hitsNodeR[node->childrenOffset + i] != 0) {
+				// Contraction by hit probability
+				probability = (float)(hitsNodeS[node->childrenOffset + i] + hitsNodeR[node->childrenOffset + i])
+					/ (float)(hitsNodeS[buildNodeOffset] + hitsNodeR[buildNodeOffset]);
+			}
+		}
+
+		// insert to sorted array
+		std::tuple<int, float, unsigned int> newTuple(node->childrenOffset + i, probability, nodeOffset);
+		auto it = std::lower_bound(childrenOffsets.begin(), childrenOffsets.end(), newTuple,
+			[](const std::tuple<int, float, unsigned int>&a, const std::tuple<int, float, unsigned int>&b)
+			{return std::get<1>(a) > std::get<1>(b); });
+		childrenOffsets.insert(it, newTuple);
 	}
 }
 
@@ -715,7 +773,7 @@ void NBVHAccel::ContractOnly(int buildNodeOffset, int nodeOffset, int *offset) {
 		linearNode->nodeLayout = 0;
 		linearNode->axis = buildNode->axis % 3;
 		std::vector<std::tuple<int, float, unsigned int> > childrenOffsets; // tuple of node offset, cost value, child index
-		AddChildrenContract(childrenOffsets, buildNodeOffset, 0);
+		AddChildrenContractSorted(childrenOffsets, buildNodeOffset, 0);
 
 		// interior nodes contraction
 		while (std::get<1>(childrenOffsets.front()) > 1.0f - 1.0f / childrenOffsets.size()
@@ -733,7 +791,7 @@ void NBVHAccel::ContractOnly(int buildNodeOffset, int nodeOffset, int *offset) {
 			// modify current node and add children of contracted node
 			linearNode->nodeLayout += childrenOffsets.size() == 1 ? contractedChild : (contractedChild << 1); // expecting max 2 contraction
 			linearNode->axis += (nodesBuild[contractSelected].axis % 3) * pow(3, childrenOffsets.size());
-			AddChildrenContract(childrenOffsets, contractSelected, contractedChild);
+			AddChildrenContractSorted(childrenOffsets, contractSelected, contractedChild);
 		}
 
 		// Tree recursion and child nodes ordering by hit probability for shadow rays
@@ -812,6 +870,15 @@ int64_t NBVHAccel::SortChildren(int nodeOffset, float &cost) {
 		
 		std::vector<std::tuple<int, float, unsigned int> > childrenOffsets; // tuple of node offset, cost value, child index
 		childrenOffsets.resize(linearNode->nChildren);
+#ifdef TRAVERSE_ORDER_LUT
+		// index to traveseOrderLUT
+		for (int i = 0; i < childrenOffsets.size(); i++) {
+			int nodeOffset = traveseOrderLUT[linearNode->childOrder + i];
+			childrenOffsets[nodeOffset] = std::tuple<int, float, unsigned int>(
+				linearNode->childrenOffset + nodeOffset, 0.0f, i);
+		}
+#else
+		// order in node
 		for (unsigned int i = 0; i < linearNode->nChildren; i++) {
 			int nodeOffset = (linearNode->childOrder >> 2 * i) & 0x3;
 			childrenOffsets[nodeOffset] = std::tuple<int, float, unsigned int>(
@@ -827,6 +894,7 @@ int64_t NBVHAccel::SortChildren(int nodeOffset, float &cost) {
 				linearNode->childrenOffset + offset, 0.0f, childIndex));
 		}
 		*/
+#endif
 
 		// Tree recursion and child nodes ordering by hit probability for shadow rays
 		std::vector<float> H, I, C;
@@ -1345,6 +1413,30 @@ void NBVHAccel::flattenNBVHTree(BVHBuildNode *node, int nodeOffset, int *offset)
 	}
 }
 
+void NBVHAccel::allignNBVHTree(LinearBVHNode *nodes_from, int nodeSourceOffset, int nodeOffset, int *offset) {
+	LinearBVHNode *linearNode = &nodes[nodeOffset];
+	linearNode->bounds = nodes_from[nodeSourceOffset].bounds;
+	if (nodes_from[nodeSourceOffset].childOrder == 0) {
+		// Create leaf flattened BVH node
+		linearNode->primitivesOffset = nodes_from[nodeSourceOffset].primitivesOffset;
+		linearNode->nPrimitives = nodes_from[nodeSourceOffset].nPrimitives;
+		linearNode->childOrder = 0;
+	}
+	else {
+		int myOffset = *offset + 1;
+		(*offset) += nodes_from[nodeSourceOffset].nChildren;
+		// Create interior flattened BVH node
+		linearNode->childrenOffset = myOffset;
+		linearNode->nodeLayout = nodes_from[nodeSourceOffset].nodeLayout;
+		linearNode->nChildren = nodes_from[nodeSourceOffset].nChildren;
+		linearNode->axis = nodes_from[nodeSourceOffset].axis;
+		linearNode->childOrder = nodes_from[nodeSourceOffset].childOrder;
+		for (int i = 0; i < nodes_from[nodeSourceOffset].nChildren; i++){
+			allignNBVHTree(nodes_from, nodes_from[nodeSourceOffset].childrenOffset + i, myOffset + i, offset);
+		}
+	}
+}
+
 NBVHAccel::~NBVHAccel() { 
 	FreeAligned(nodes);
 	FreeAligned(nodesBuild);
@@ -1391,9 +1483,9 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 					for (unsigned int chilnNo = node->nChildren - 1; chilnNo > 0; --chilnNo)
 						nodesToVisit[toVisitOffset++] = node->childrenOffset + traveseOrderLUT[node->childOrder + masterLUT[orderLUTindex + chilnNo]];
 #else
-					currentNodeIndex = node->childrenOffset + ((node->childOrder >> (2 * masterLUT[orderLUTindex])) & 0x3);
+					currentNodeIndex = node->childrenOffset + ((node->childOrder >> masterLUT[orderLUTindex]) & 0x3);
 					for (unsigned int chilnNo = node->nChildren - 1; chilnNo > 0; --chilnNo)
-						nodesToVisit[toVisitOffset++] = node->childrenOffset + ((node->childOrder >> (2 * masterLUT[orderLUTindex + chilnNo])) & 0x3);
+						nodesToVisit[toVisitOffset++] = node->childrenOffset + ((node->childOrder >> masterLUT[orderLUTindex + chilnNo]) & 0x3);
 #endif
 				}
 			}
@@ -1429,9 +1521,9 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 					for (unsigned int chilnNo = 0; chilnNo < node->nChildren - 1; ++chilnNo)
 						nodesToVisit[toVisitOffset++] = node->childrenOffset + traveseOrderLUT[node->childOrder + masterLUT[orderLUTindex + chilnNo]];
 #else
-					currentNodeIndex = node->childrenOffset + ((node->childOrder >> (2 * masterLUT[orderLUTindex + node->nChildren - 1])) & 0x3);
+					currentNodeIndex = node->childrenOffset + ((node->childOrder >> masterLUT[orderLUTindex + node->nChildren - 1]) & 0x3);
 					for (unsigned int chilnNo = 0; chilnNo < node->nChildren - 1; ++chilnNo)
-						nodesToVisit[toVisitOffset++] = node->childrenOffset + ((node->childOrder >> (2 * masterLUT[orderLUTindex + chilnNo])) & 0x3);
+						nodesToVisit[toVisitOffset++] = node->childrenOffset + ((node->childOrder >> masterLUT[orderLUTindex + chilnNo]) & 0x3);
 #endif
 				}
 			}
@@ -1534,6 +1626,276 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 	return hit;
 }
 
+#elif defined(TRAVERSE_SORTED)
+bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const {
+	if (!nodes) return false;
+	ProfilePhase p(Prof::AccelIntersect);
+	bool hit = false;
+	Vector3f invDir(1 / ray.d.x, 1 / ray.d.y, 1 / ray.d.z);
+	int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
+	// traversation by calculating distances
+	int indexes[NODE_N], childHits;
+	Float distances[NODE_N];
+	// Follow ray through BVH nodes to find primitive intersections
+	int toVisitOffset = 0, currentNodeIndex = 0;
+	int nodesToVisit[64 * NODE_N];
+
+	/*
+	const LinearBVHNode *node = &nodes[currentNodeIndex];
+	++traversationStepsRegular;
+	if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
+		childHits = 0;
+		for (int i = 0; i < node->nChildren; i++) {
+			++traversationStepsRegular;
+			if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, distances + childHits))
+				indexes[childHits++] = i;
+		}
+
+		// push to stack by the sorted distances (overall minimum is next node to visit)
+		int maximum_i = 0;
+		for (int i = 0; i < childHits - 1; i++) {
+			maximum_i = i;
+			for (int j = i + 1; j < childHits; j++) {
+				if (distances[j] > distances[maximum_i])
+					maximum_i = j;
+			}
+			std::swap(distances[i], distances[maximum_i]);
+			std::swap(indexes[i], indexes[maximum_i]);
+
+			nodesToVisit[toVisitOffset++] = node->childrenOffset + indexes[i];
+		}
+
+		if (childHits != 0)
+			currentNodeIndex = node->childrenOffset + indexes[childHits - 1];
+		else
+			return false;
+	}
+	else
+		return false;
+
+	while (true) {
+		node = &nodes[currentNodeIndex];
+		if (node->childOrder == 0) {
+			// Intersect ray with primitives in leaf BVH node
+			intersectTestsRegular += node->nPrimitives;
+			for (int i = 0; i < node->nPrimitives; ++i)
+				if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
+					hit = true;
+			if (toVisitOffset == 0) break;
+			currentNodeIndex = nodesToVisit[--toVisitOffset];
+		}
+		else {
+			childHits = 0;
+			for (int i = 0; i < node->nChildren; i++) {
+				++traversationStepsRegular;
+				if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, distances + childHits))
+					indexes[childHits++] = i;
+			}
+
+			// push to stack by the sorted distances (overall minimum is next node to visit)
+			int maximum_i = 0;
+			for (int i = 0; i < childHits - 1; i++) {
+				maximum_i = i;
+				for (int j = i + 1; j < childHits; j++) {
+					if (distances[j] > distances[maximum_i])
+						maximum_i = j;
+				}
+				std::swap(distances[i], distances[maximum_i]);
+				std::swap(indexes[i], indexes[maximum_i]);
+
+				nodesToVisit[toVisitOffset++] = node->childrenOffset + indexes[i];
+			}
+
+			if (childHits != 0)
+				currentNodeIndex = node->childrenOffset + indexes[childHits - 1];
+			else {
+				if (toVisitOffset == 0) break;
+				currentNodeIndex = nodesToVisit[--toVisitOffset];
+			}
+		}
+	}
+	*/
+	while (true) {
+		const LinearBVHNode *node = &nodes[currentNodeIndex];
+		++traversationStepsRegular;
+		// Check ray against BVH node
+		if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
+			if (node->childOrder == 0) {
+				// Intersect ray with primitives in leaf BVH node
+				intersectTestsRegular += node->nPrimitives;
+				for (int i = 0; i < node->nPrimitives; ++i)
+					if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
+						hit = true;
+				if (toVisitOffset == 0) break;
+				currentNodeIndex = nodesToVisit[--toVisitOffset];
+			}
+			else {
+				// SORTED :
+				// traversation by sorting distances to child BBs
+
+				// intersection distance to BB (0 for ray inside)
+				for (size_t i = 0; i < node->nChildren; i++) {
+					indexes[i] = i;
+					if (!nodes[node->childrenOffset + i].bounds.IntersectP(ray, distances + i))
+						distances[i] = ray.tMax;
+				}
+
+				// push to stack by the sorted distances (overall minimum is next node to visit)
+				// TODO: optimize... slow (just traverse count reference)
+				int maximum_i = 0;
+				for (size_t i = 0; i < node->nChildren; i++) {
+					maximum_i = i;
+					for (size_t j = i + 1; j < node->nChildren; j++) {
+						if (distances[j] > distances[maximum_i])
+							maximum_i = j;
+					}
+					std::swap(distances[i], distances[maximum_i]);
+					std::swap(indexes[i], indexes[maximum_i]);
+
+					if (i == node->nChildren - 1)
+						currentNodeIndex = node->childrenOffset + indexes[i];
+					else
+						nodesToVisit[toVisitOffset++] = node->childrenOffset + indexes[i];
+				}
+			}
+		}
+		else {
+			if (toVisitOffset == 0) break;
+			currentNodeIndex = nodesToVisit[--toVisitOffset];
+		}
+	}
+	return hit;
+}
+
+#elif defined(TRAVERSE_FIRST_NEAREST)
+bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const {
+	if (!nodes) return false;
+	ProfilePhase p(Prof::AccelIntersect);
+	bool hit = false;
+	Vector3f invDir(1 / ray.d.x, 1 / ray.d.y, 1 / ray.d.z);
+	int dirIsNeg[3] = { invDir.x < 0, invDir.y < 0, invDir.z < 0 };
+	// traverse to nearest, rest without sorting
+	int nearest;
+	Float min_distance = ray.tMax, current_distance;
+	// Follow ray through BVH nodes to find primitive intersections
+	int toVisitOffset = 0, currentNodeIndex = 0;
+	int nodesToVisit[64 * NODE_N];
+
+	const LinearBVHNode *node = &nodes[currentNodeIndex];
+	++traversationStepsRegular;
+	if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
+		nearest = -1;
+		for (int i = node->nChildren - 1; i >= 0; --i) {
+			++traversationStepsRegular;
+			if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, &current_distance)) {
+				// hit
+				if (current_distance < min_distance) {
+					// closer
+					if (nearest != -1)
+						nodesToVisit[toVisitOffset++] = node->childrenOffset + nearest;
+					nearest = i;
+					min_distance = current_distance;
+				}
+				else {
+					nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
+				}
+			}
+		}
+		if (nearest == -1)
+			return false;
+		else
+			currentNodeIndex = node->childrenOffset + nearest;
+	}
+	else
+		return false;
+	while (true) {
+		node = &nodes[currentNodeIndex];
+		if (node->childOrder == 0) {
+			// Intersect ray with primitives in leaf BVH node
+			intersectTestsRegular += node->nPrimitives;
+			for (int i = 0; i < node->nPrimitives; ++i)
+				if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
+					hit = true;
+			if (toVisitOffset == 0) break;
+			currentNodeIndex = nodesToVisit[--toVisitOffset];
+		}
+		else {
+			min_distance = ray.tMax;
+			nearest = -1;
+			for (int i = node->nChildren - 1; i >= 0; --i){
+				++traversationStepsRegular;
+				if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, &current_distance)) {
+					// hit
+					if (current_distance < min_distance) {
+						// is nearest
+						if (nearest != -1)
+							nodesToVisit[toVisitOffset++] = node->childrenOffset + nearest;
+						nearest = i;
+						min_distance = current_distance;
+					}
+					else {
+						nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
+					}
+				}
+			}
+
+			if (nearest == -1) {
+				// no hit occured in node
+				if (toVisitOffset == 0) break;
+				currentNodeIndex = nodesToVisit[--toVisitOffset];
+			}
+			else {
+				currentNodeIndex = node->childrenOffset + nearest;
+			}
+		}
+	}
+	/*
+	while (true) {
+		const LinearBVHNode *node = &nodes[currentNodeIndex];
+		++traversationStepsRegular;
+		// Check ray against BVH node
+		if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
+			if (node->childOrder == 0) {
+				// Intersect ray with primitives in leaf BVH node
+				intersectTestsRegular += node->nPrimitives;
+				for (int i = 0; i < node->nPrimitives; ++i)
+					if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
+						hit = true;
+				if (toVisitOffset == 0) break;
+				currentNodeIndex = nodesToVisit[--toVisitOffset];
+			}
+			else {
+				// First nearest :
+				// traversation continue by nearest, rest without sorting
+
+				// intersection distance to BB (0 for ray inside)
+				nearest = 0;
+				min_distance = ray.tMax;
+				for (int i = 0; i < node->nChildren; i++) {
+					if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, &current_distance)
+						&& current_distance < min_distance) {
+						nearest = i;
+						min_distance = current_distance;
+					}
+				}
+
+				for (int i = node->nChildren - 1; i >= 0; --i){
+					if (i == nearest)
+						currentNodeIndex = node->childrenOffset + nearest;
+					else
+						nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
+				}
+			}
+		}
+		else {
+			if (toVisitOffset == 0) break;
+			currentNodeIndex = nodesToVisit[--toVisitOffset];
+		}
+	}
+	*/
+	return hit;
+}
+
 #else
 bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const {
 	if (!nodes) return false;
@@ -1586,6 +1948,7 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 	return hit;
 }
 #endif
+
 
 bool NBVHAccel::IntersectLogging(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const {
 	// logging with binary BVH

@@ -47,11 +47,7 @@
  // API Additional Headers
 #include "accelerators/bvh.h"
 #include "accelerators/qbvh.h"
-#ifdef SORTING_BVH
-#include "accelerators/nbvh_sorting.h"
-#else
 #include "accelerators/nbvh.h"
-#endif
 #include "accelerators/kdtreeaccel.h"
 #include "cameras/environment.h"
 #include "cameras/orthographic.h"
@@ -654,9 +650,12 @@ std::shared_ptr<Primitive> MakeAccelerator(
     const ParamSet &paramSet) {
     std::shared_ptr<Primitive> accel;
 	if (name == "nbvh") {
-#ifdef DIRECTION_LUT
+#if defined(DIRECTION_LUT)
 		// order by pre-calculated ray directions
 		accel = CreateQBVHAccelerator(prims, paramSet);
+#elif defined(SORTING_BVH)
+		// order by sorting distances to BB
+		accel = CreateNBVHAcceleratorSort(prims, paramSet);
 #else
 		// order by contruction splitting axis
 		accel = CreateNBVHAccelerator(prims, paramSet);

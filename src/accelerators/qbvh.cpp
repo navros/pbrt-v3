@@ -124,6 +124,8 @@ namespace pbrt {
 		2, 1,0,0,0  // 31
 	};
 
+#define NODE_CHILDREN_COUNT dirOrderLUT[node->childOrder[0]]
+
 
 	// NBVHAccel Local Declarations
 	struct BVHPrimitiveInfo {
@@ -179,7 +181,8 @@ namespace pbrt {
 		};
 		union {
 			struct {				// leaf
-				uint16_t leaf;		// leaf flag (=0)
+				uint8_t leaf;		// leaf flag (=0)
+				uint8_t empty;
 				uint16_t nPrimitives;// amount of primitives
 			};
 			uint8_t childOrder[4];  // index to traverse order
@@ -450,8 +453,8 @@ namespace pbrt {
 		optimizeTime += std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
 
 		// optimize instanced BVHs in primitives
-		//for (int i = 0; i < primitives.size(); i++)
-		//	primitives[i]->Optimize(phase);
+		for (int i = 0; i < primitives.size(); i++)
+			primitives[i]->Optimize(phase);
 	}
 
 	void QBVHAccel::AddChildrenContract(
@@ -462,7 +465,7 @@ namespace pbrt {
 		LinearBVHNode* node = &nodesBuild[buildNodeOffset];
 		unsigned int nodeOffset;
 		float probability;
-		for (int i = 0; i < dirOrderLUT[node->childOrder[0]]; i++) {
+		for (int i = 0; i < NODE_CHILDREN_COUNT; i++) {
 			nodeOffset = i == 0 ? replaceOffset : childrenOffsets.size();
 			probability = 0.0f;
 			if (nodesBuild[node->childrenOffset + i].childOrder[0] > 0) {
@@ -1274,7 +1277,7 @@ namespace pbrt {
 					}
 					else {
 						currentNodeIndex = node->childrenOffset + dirOrderLUT[node->childOrder[rayDir] + 1];
-						for (unsigned int chilnNo = dirOrderLUT[node->childOrder[0]]; chilnNo > 1; --chilnNo) //move 1 from child amount
+						for (unsigned int chilnNo = NODE_CHILDREN_COUNT; chilnNo > 1; --chilnNo) //move 1 from child amount
 							nodesToVisit[toVisitOffset++] = node->childrenOffset + dirOrderLUT[node->childOrder[rayDir] + chilnNo];
 					}
 				}
@@ -1303,7 +1306,7 @@ namespace pbrt {
 						currentNodeIndex = nodesToVisit[--toVisitOffset];
 					}
 					else {
-						children_count = dirOrderLUT[node->childOrder[0]];
+						children_count = NODE_CHILDREN_COUNT;
 						currentNodeIndex = node->childrenOffset + dirOrderLUT[node->childOrder[rayDir] + children_count];
 						for (unsigned int chilnNo = 1; chilnNo < children_count; ++chilnNo) //move 1 from child amount
 							nodesToVisit[toVisitOffset++] = node->childrenOffset + dirOrderLUT[node->childOrder[rayDir] + chilnNo];
@@ -1422,7 +1425,7 @@ namespace pbrt {
 				}
 				else {
 					currentNodeIndex = node->childrenOffset;
-					for (int i = dirOrderLUT[node->childOrder[0]] - 1; i >= 1; --i)
+					for (int i = NODE_CHILDREN_COUNT - 1; i >= 1; --i)
 						nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
 				}
 			}
@@ -1463,10 +1466,10 @@ namespace pbrt {
 				}
 				else {
 					currentNodeIndex = node->childrenOffset;
-					for (int i = dirOrderLUT[node->childOrder[0]] - 1; i >= 1; --i)
+					for (int i = NODE_CHILDREN_COUNT - 1; i >= 1; --i)
 						nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
 #ifdef RANDOMIZE				
-					std::random_shuffle(&nodesToVisit[toVisitOffset - (dirOrderLUT[node->childOrder[0]] - 1)], &nodesToVisit[toVisitOffset]);
+					std::random_shuffle(&nodesToVisit[toVisitOffset - (NODE_CHILDREN_COUNT - 1)], &nodesToVisit[toVisitOffset]);
 #endif //RANDOMIZE
 				}
 			}

@@ -137,7 +137,7 @@ class Aggregate : public Primitive {
     void ComputeScatteringFunctions(SurfaceInteraction *isect,
                                     MemoryArena &arena, TransportMode mode,
                                     bool allowMultipleLobes) const;
-	void Optimize(int phase = 0) {}
+	virtual void Optimize(int phase = 0) { printf("ERROR optimizing abstract class"); }
   protected:
 	int optimized;
 };

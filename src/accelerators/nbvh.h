@@ -98,6 +98,8 @@ class NBVHAccel : public Aggregate {
                                 std::vector<BVHBuildNode *> &treeletRoots,
                                 int start, int end, int *totalNodes) const;
     void flattenNBVHTree(BVHBuildNode *node, int nodeOffset, int *offset);
+	void allignNBVHTree(LinearBVHNode *nodes_from, int nodeSourceOffset, 
+					    int nodeOffset, int *offset);
 
 	typedef bool (NBVHAccel::*ShadowIntersection)(const NBVHAccel* nbvh, const Ray &ray) const;
 	typedef bool (NBVHAccel::*RegularIntersection)(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
@@ -110,6 +112,9 @@ class NBVHAccel : public Aggregate {
 	bool IntersectLogging(const NBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	void AddChildrenContract(
 		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets, 
+		int buildNodeOffset, unsigned int replaceOffset);
+	void AddChildrenContractSorted(
+		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets,
 		int buildNodeOffset, unsigned int replaceOffset);
 	int64_t Contract(int buildNodeOffset, int nodeOffset, int *offset, float &cost);
 	void ContractOnly(int buildNodeOffset, int nodeOffset, int *offset);
