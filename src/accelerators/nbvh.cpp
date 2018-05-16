@@ -873,16 +873,16 @@ int64_t NBVHAccel::SortChildren(int nodeOffset, float &cost) {
 #ifdef TRAVERSE_ORDER_LUT
 		// index to traveseOrderLUT
 		for (int i = 0; i < childrenOffsets.size(); i++) {
-			int nodeOffset = traveseOrderLUT[linearNode->childOrder + i];
-			childrenOffsets[nodeOffset] = std::tuple<int, float, unsigned int>(
-				linearNode->childrenOffset + nodeOffset, 0.0f, i);
+			int childOffset = traveseOrderLUT[linearNode->childOrder + i];
+			childrenOffsets[childOffset] = std::tuple<int, float, unsigned int>(
+				linearNode->childrenOffset + childOffset, 0.0f, i);
 		}
 #else
 		// order in node
 		for (unsigned int i = 0; i < linearNode->nChildren; i++) {
-			int nodeOffset = (linearNode->childOrder >> 2 * i) & 0x3;
-			childrenOffsets[nodeOffset] = std::tuple<int, float, unsigned int>(
-				linearNode->childrenOffset + nodeOffset, 0.0f, i);
+			int childOffset = (linearNode->childOrder >> 2 * i) & 0x3;
+			childrenOffsets[childOffset] = std::tuple<int, float, unsigned int>(
+				linearNode->childrenOffset + childOffset, 0.0f, i);
 		}
 		/* THE SAME
 		for (unsigned int offset = 0; offset < linearNode->nChildren; offset++) {
@@ -1640,81 +1640,6 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 	int toVisitOffset = 0, currentNodeIndex = 0;
 	int nodesToVisit[64 * NODE_N];
 
-	/*
-	const LinearBVHNode *node = &nodes[currentNodeIndex];
-	++traversationStepsRegular;
-	if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
-		childHits = 0;
-		for (int i = 0; i < node->nChildren; i++) {
-			++traversationStepsRegular;
-			if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, distances + childHits))
-				indexes[childHits++] = i;
-		}
-
-		// push to stack by the sorted distances (overall minimum is next node to visit)
-		int maximum_i = 0;
-		for (int i = 0; i < childHits - 1; i++) {
-			maximum_i = i;
-			for (int j = i + 1; j < childHits; j++) {
-				if (distances[j] > distances[maximum_i])
-					maximum_i = j;
-			}
-			std::swap(distances[i], distances[maximum_i]);
-			std::swap(indexes[i], indexes[maximum_i]);
-
-			nodesToVisit[toVisitOffset++] = node->childrenOffset + indexes[i];
-		}
-
-		if (childHits != 0)
-			currentNodeIndex = node->childrenOffset + indexes[childHits - 1];
-		else
-			return false;
-	}
-	else
-		return false;
-
-	while (true) {
-		node = &nodes[currentNodeIndex];
-		if (node->childOrder == 0) {
-			// Intersect ray with primitives in leaf BVH node
-			intersectTestsRegular += node->nPrimitives;
-			for (int i = 0; i < node->nPrimitives; ++i)
-				if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
-					hit = true;
-			if (toVisitOffset == 0) break;
-			currentNodeIndex = nodesToVisit[--toVisitOffset];
-		}
-		else {
-			childHits = 0;
-			for (int i = 0; i < node->nChildren; i++) {
-				++traversationStepsRegular;
-				if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, distances + childHits))
-					indexes[childHits++] = i;
-			}
-
-			// push to stack by the sorted distances (overall minimum is next node to visit)
-			int maximum_i = 0;
-			for (int i = 0; i < childHits - 1; i++) {
-				maximum_i = i;
-				for (int j = i + 1; j < childHits; j++) {
-					if (distances[j] > distances[maximum_i])
-						maximum_i = j;
-				}
-				std::swap(distances[i], distances[maximum_i]);
-				std::swap(indexes[i], indexes[maximum_i]);
-
-				nodesToVisit[toVisitOffset++] = node->childrenOffset + indexes[i];
-			}
-
-			if (childHits != 0)
-				currentNodeIndex = node->childrenOffset + indexes[childHits - 1];
-			else {
-				if (toVisitOffset == 0) break;
-				currentNodeIndex = nodesToVisit[--toVisitOffset];
-			}
-		}
-	}
-	*/
 	while (true) {
 		const LinearBVHNode *node = &nodes[currentNodeIndex];
 		++traversationStepsRegular;
@@ -1741,7 +1666,6 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 				}
 
 				// push to stack by the sorted distances (overall minimum is next node to visit)
-				// TODO: optimize... slow (just traverse count reference)
 				int maximum_i = 0;
 				for (size_t i = 0; i < node->nChildren; i++) {
 					maximum_i = i;
@@ -1849,50 +1773,6 @@ bool NBVHAccel::IntersectRegular(const NBVHAccel* nbvh, const Ray &ray, SurfaceI
 			}
 		}
 	}
-	/*
-	while (true) {
-		const LinearBVHNode *node = &nodes[currentNodeIndex];
-		++traversationStepsRegular;
-		// Check ray against BVH node
-		if (node->bounds.IntersectP(ray, invDir, dirIsNeg)) {
-			if (node->childOrder == 0) {
-				// Intersect ray with primitives in leaf BVH node
-				intersectTestsRegular += node->nPrimitives;
-				for (int i = 0; i < node->nPrimitives; ++i)
-					if (primitives[node->primitivesOffset + i]->Intersect(ray, isect))
-						hit = true;
-				if (toVisitOffset == 0) break;
-				currentNodeIndex = nodesToVisit[--toVisitOffset];
-			}
-			else {
-				// First nearest :
-				// traversation continue by nearest, rest without sorting
-
-				// intersection distance to BB (0 for ray inside)
-				nearest = 0;
-				min_distance = ray.tMax;
-				for (int i = 0; i < node->nChildren; i++) {
-					if (nodes[node->childrenOffset + i].bounds.IntersectP(ray, &current_distance)
-						&& current_distance < min_distance) {
-						nearest = i;
-						min_distance = current_distance;
-					}
-				}
-
-				for (int i = node->nChildren - 1; i >= 0; --i){
-					if (i == nearest)
-						currentNodeIndex = node->childrenOffset + nearest;
-					else
-						nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
-				}
-			}
-		}
-		else {
-			if (toVisitOffset == 0) break;
-			currentNodeIndex = nodesToVisit[--toVisitOffset];
-		}
-	}
-	*/
 	return hit;
 }
 
@@ -2066,8 +1946,8 @@ bool NBVHAccel::IntersectPLoggingMulti(const NBVHAccel* nbvh, const Ray &ray) co
 				currentNodeIndex = node->childrenOffset;
 				for (int i = node->nChildren - 1; i >= 1; --i)
 					nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
-#ifdef RANDOMIZE				
-				std::random_shuffle(&nodesToVisit[toVisitOffset - (node->nChildren - 1)], &nodesToVisit[toVisitOffset]);
+#ifdef RANDOMIZE
+				thisBVH->rng.Shuffle<int*>(&nodesToVisit[toVisitOffset - (node->nChildren - 1)], &nodesToVisit[toVisitOffset]);
 #endif //RANDOMIZE
 			}
 		}
@@ -2108,7 +1988,7 @@ bool NBVHAccel::IntersectPLogging(const NBVHAccel* nbvh, const Ray &ray) const{
 				currentNodeIndex = nodesToVisit[--toVisitOffset];
 			} else {
 #ifdef RANDOMIZE
-				if (rand() < 0.5f * RAND_MAX) { // random shuffle
+				if (thisBVH->rng.UniformFloat() < 0.5f) { // random shuffle
 #else
 				if (dirIsNeg[node->axis % 3]) {
 #endif //RANDOMIZE
@@ -2134,6 +2014,8 @@ std::shared_ptr<NBVHAccel> CreateNBVHAccelerator(
     const std::vector<std::shared_ptr<Primitive>> &prims, const ParamSet &ps) {
     std::string splitMethodName = ps.FindOneString("splitmethod", "sah");
 	bool logging = ps.FindOneBool("logging", true);
+	bool dualLogging = ps.FindOneBool("dualoptimize", false); // remove warning
+	int  logging_samples = ps.FindOneBool("logging samples", 1); // remove warning
     NBVHAccel::SplitMethod splitMethod;
     if (splitMethodName == "sah")
         splitMethod = NBVHAccel::SplitMethod::SAH;

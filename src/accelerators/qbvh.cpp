@@ -68,17 +68,11 @@ namespace pbrt {
 	STAT_COUNTER("BVH_logging/swapped nodes", logging_swappedNodes);
 	STAT_COUNTER("BVH_logging/swapped primitives", logging_swappedPrimitives);
 
-#define VISIT_THRESHOLD 20 //temporary.. TODO
 #define NODE_N 4 //n-ary BVH nodes
 
 #define RANDOMIZE // random traversation order for loging logging 
 #define LOGGING_S // logging for shadow rays
 //#define LOGGING_R // logging for regular rays
-
-
-//#define TRAVERSE_SORTED
-//#define TRAVERSE_FIRST_NEAREST
-#define DIRECTIONAL_LUT
 
 //#define DISTANCE_CENTROID
 
@@ -403,13 +397,19 @@ namespace pbrt {
 
 			int64_t primitives_hits = Contract(0, 0, &offset, cost);
 			totalNodesOptimized = offset + 1;
-			//TODO.. decrease size by contracted nodes
 
 			hitsPrimitiveS.clear();
 			hitsNodeS.clear();
 			hitsNodeR.clear();
 			usedIntersection = &QBVHAccel::IntersectRegular;
 			usedIntersectionP = &QBVHAccel::IntersectPRegular;
+			
+			// DFS tree order
+			offset = 0;
+			LinearBVHNode *nodes_tmp = nodes;
+			nodes = AllocAligned<LinearBVHNode>(totalNodesOptimized);
+			allignNBVHTree(nodes_tmp, 0, 0, &offset);
+			FreeAligned(nodes_tmp);
 		}
 		else if (static_cast<OptimizePhase>(phase) == OptimizePhase::SATC) {
 			// 1PHASE optimization without logging - by surface area
@@ -446,6 +446,13 @@ namespace pbrt {
 				hitsPrimitiveS.clear();
 				hitsNodeS.clear();
 				usedIntersectionP = &QBVHAccel::IntersectPRegular;
+
+				// DFS tree order
+				offset = 0;
+				LinearBVHNode *nodes_tmp = nodes;
+				nodes = AllocAligned<LinearBVHNode>(totalNodesOptimized);
+				allignNBVHTree(nodes_tmp, 0, 0, &offset);
+				FreeAligned(nodes_tmp);
 			}
 		}
 
@@ -484,6 +491,40 @@ namespace pbrt {
 			childrenOffsets.push_back(std::tuple<int, float, unsigned int>(
 				node->childrenOffset + i, probability, nodeOffset));
 			std::push_heap(childrenOffsets.begin(), childrenOffsets.end(), PairHeapCompare()); // heapify
+		}
+	}
+
+	void QBVHAccel::AddChildrenContractSorted(
+		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets,
+		int buildNodeOffset,
+		unsigned int replaceOffset) {
+		// insert children offsets with calculated hit probability
+		LinearBVHNode* node = &nodesBuild[buildNodeOffset];
+		unsigned int nodeOffset;
+		float probability;
+		for (int i = 0; i < NODE_CHILDREN_COUNT; i++) {
+			nodeOffset = i == 0 ? replaceOffset : childrenOffsets.size();
+			probability = 0.0f;
+			if (nodesBuild[node->childrenOffset + i].childOrder[0] > 0) {
+				// set node contraction probability
+				if (static_cast<OptimizePhase>(optimized) == OptimizePhase::SATC) {
+					// Surface Area Tree Contraction (no logging phase)
+					probability = nodesBuild[node->childrenOffset + i].bounds.SurfaceArea()
+						/ nodesBuild[buildNodeOffset].bounds.SurfaceArea();
+				}
+				else if (hitsNodeS[node->childrenOffset + i] + hitsNodeR[node->childrenOffset + i] != 0) {
+					// Contraction by hit probability
+					probability = (float)(hitsNodeS[node->childrenOffset + i] + hitsNodeR[node->childrenOffset + i])
+						/ (float)(hitsNodeS[buildNodeOffset] + hitsNodeR[buildNodeOffset]);
+				}
+			}
+
+			// insert to sorted array
+			std::tuple<int, float, unsigned int> newTuple(node->childrenOffset + i, probability, nodeOffset);
+			auto it = std::lower_bound(childrenOffsets.begin(), childrenOffsets.end(), newTuple,
+				[](const std::tuple<int, float, unsigned int>&a, const std::tuple<int, float, unsigned int>&b)
+			{return std::get<1>(a) > std::get<1>(b); });
+			childrenOffsets.insert(it, newTuple);
 		}
 	}
 
@@ -679,11 +720,13 @@ namespace pbrt {
 			// leaf node
 			linearNode->nPrimitives = buildNode->nPrimitives;
 			linearNode->primitivesOffset = buildNode->primitivesOffset;
+			linearNode->leaf = 0;
+			linearNode->empty = 0;
 		}
 		else {
 			// interior node - contract and order children
 			std::vector<std::tuple<int, float, unsigned int> > childrenOffsets; // tuple of node offset, cost value, child index
-			AddChildrenContract(childrenOffsets, buildNodeOffset, 0);
+			AddChildrenContractSorted(childrenOffsets, buildNodeOffset, 0);
 
 			// interior nodes contraction
 			while (std::get<1>(childrenOffsets.front()) > 1.0f - 1.0f / childrenOffsets.size()
@@ -699,7 +742,7 @@ namespace pbrt {
 				childrenOffsets.pop_back();
 
 				// modify current node and add children of contracted node
-				AddChildrenContract(childrenOffsets, contractSelected, contractedChild);
+				AddChildrenContractSorted(childrenOffsets, contractSelected, contractedChild);
 			}
 
 			// Tree recursion and child nodes ordering by hit probability for shadow rays
@@ -748,7 +791,7 @@ namespace pbrt {
 			int child_count = dirOrderLUT[linearNode->childOrder[0]];
 			childrenOffsets.resize(child_count);
 			for (unsigned int i = 0; i < child_count; i++) {
-				childrenOffsets[nodeOffset] = std::tuple<int, float, unsigned int>(
+				childrenOffsets[i] = std::tuple<int, float, unsigned int>(
 					linearNode->childrenOffset + i, 0.0f, i);
 			}
 
@@ -1228,6 +1271,7 @@ namespace pbrt {
 			CHECK_LT(node->nPrimitives, 65536);
 			linearNode->primitivesOffset = node->firstPrimOffset;
 			linearNode->leaf = 0;
+			linearNode->empty = 0;
 			linearNode->nPrimitives = node->nPrimitives;
 		}
 		else {
@@ -1238,6 +1282,29 @@ namespace pbrt {
 			flattenNBVHTree(node->children[0], myOffset, offset);
 			flattenNBVHTree(node->children[1], myOffset + 1, offset);
 			SetOrder(2, linearNode, myOffset);
+		}
+	}
+
+	void QBVHAccel::allignNBVHTree(LinearBVHNode *nodes_from, int nodeSourceOffset, int nodeOffset, int *offset) {
+		LinearBVHNode *linearNode = &nodes[nodeOffset];
+		linearNode->bounds = nodes_from[nodeSourceOffset].bounds;
+		if (nodes_from[nodeSourceOffset].childOrder[0] == 0) {
+			// Create leaf flattened BVH node
+			linearNode->primitivesOffset = nodes_from[nodeSourceOffset].primitivesOffset;
+			linearNode->leaf = 0; // is leaf
+			linearNode->empty = 0;
+			linearNode->nPrimitives = nodes_from[nodeSourceOffset].nPrimitives;
+		}
+		else {
+			int myOffset = *offset + 1;
+			int children = dirOrderLUT[nodes_from[nodeSourceOffset].childOrder[0]];
+			(*offset) += children;
+			// Create interior flattened BVH node
+			linearNode->childrenOffset = myOffset;
+			for (int i = 0; i < RAY_DIRECTIONS; i++)
+				linearNode->childOrder[i] = nodes_from[nodeSourceOffset].childOrder[i];
+			for (int i = 0; i < children; i++)
+				allignNBVHTree(nodes_from, nodes_from[nodeSourceOffset].childrenOffset + i, myOffset + i, offset);
 		}
 	}
 
@@ -1468,8 +1535,8 @@ namespace pbrt {
 					currentNodeIndex = node->childrenOffset;
 					for (int i = NODE_CHILDREN_COUNT - 1; i >= 1; --i)
 						nodesToVisit[toVisitOffset++] = node->childrenOffset + i;
-#ifdef RANDOMIZE				
-					std::random_shuffle(&nodesToVisit[toVisitOffset - (NODE_CHILDREN_COUNT - 1)], &nodesToVisit[toVisitOffset]);
+#ifdef RANDOMIZE
+					thisBVH->rng.Shuffle<int*>(&nodesToVisit[toVisitOffset - (NODE_CHILDREN_COUNT - 1)], &nodesToVisit[toVisitOffset]);
 #endif //RANDOMIZE
 				}
 			}
@@ -1512,7 +1579,7 @@ namespace pbrt {
 				}
 				else {
 #ifdef RANDOMIZE
-					if (rand() < 0.5f * RAND_MAX) { // random shuffle
+					if (thisBVH->rng.UniformFloat() < 0.5f) { // random shuffle
 #else
 					if (dirOrderLUT[node->childOrder[rayDir] + 1] == 0 && !dirIsNeg[2]) {
 #endif //RANDOMIZE

@@ -41,6 +41,7 @@
 // accelerators/bvh.h*
 #include "pbrt.h"
 #include "primitive.h"
+#include "rng.h"
 #include <atomic>
 
 namespace pbrt {
@@ -72,11 +73,10 @@ class QBVHAccel : public Aggregate {
 	int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 	void Optimize(int phase = 0);
 
-	// make hits as float (for direct fraction use during computation) is 
-	// no good (incementing +1 have no effect for number >= 2^24)
 	std::vector<int64_t> hitsNodeS;		// node shadow ray hits 
 	std::vector<int64_t> hitsPrimitiveS;
 	std::vector<int64_t> hitsNodeR;		// node regular ray hits
+	RNG rng;
 
   private:
     // NBVHAccel Private Methods
@@ -98,6 +98,8 @@ class QBVHAccel : public Aggregate {
                                 std::vector<BVHBuildNode *> &treeletRoots,
                                 int start, int end, int *totalNodes) const;
     void flattenNBVHTree(BVHBuildNode *node, int nodeOffset, int *offset);
+	void allignNBVHTree(LinearBVHNode *nodes_from, int nodeSourceOffset,
+		int nodeOffset, int *offset);
 
 	typedef bool (QBVHAccel::*ShadowIntersection)(const QBVHAccel* nbvh, const Ray &ray) const;
 	typedef bool (QBVHAccel::*RegularIntersection)(const QBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
@@ -110,6 +112,9 @@ class QBVHAccel : public Aggregate {
 	bool IntersectLogging(const QBVHAccel* nbvh, const Ray &ray, SurfaceInteraction *isect) const;
 	void AddChildrenContract(
 		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets, 
+		int buildNodeOffset, unsigned int replaceOffset);
+	void AddChildrenContractSorted(
+		std::vector<std::tuple<int, float, unsigned int> > &childrenOffsets,
 		int buildNodeOffset, unsigned int replaceOffset);
 	void SetOrder(int childCount, LinearBVHNode *linearNode, int myOffset);
 	int64_t Contract(int buildNodeOffset, int nodeOffset, int *offset, float &cost);

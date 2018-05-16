@@ -30,7 +30,6 @@
 
  */
 
-//#define SORTING_BVH
 //#define DIRECTION_LUT
 
 
@@ -653,9 +652,6 @@ std::shared_ptr<Primitive> MakeAccelerator(
 #if defined(DIRECTION_LUT)
 		// order by pre-calculated ray directions
 		accel = CreateQBVHAccelerator(prims, paramSet);
-#elif defined(SORTING_BVH)
-		// order by sorting distances to BB
-		accel = CreateNBVHAcceleratorSort(prims, paramSet);
 #else
 		// order by contruction splitting axis
 		accel = CreateNBVHAccelerator(prims, paramSet);

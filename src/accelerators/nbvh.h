@@ -41,6 +41,7 @@
 // accelerators/bvh.h*
 #include "pbrt.h"
 #include "primitive.h"
+#include "rng.h"
 #include <atomic>
 
 namespace pbrt {
@@ -72,11 +73,10 @@ class NBVHAccel : public Aggregate {
 	int ComputeSAHCost(std::pair<double, double> & sah_sa) const;
 	void Optimize(int phase = 0);
 
-	// make hits as float (for direct fraction use during computation) is 
-	// no good (incementing +1 have no effect for number >= 2^24)
 	std::vector<int64_t> hitsNodeS;		// node shadow ray hits 
 	std::vector<int64_t> hitsPrimitiveS;
 	std::vector<int64_t> hitsNodeR;		// node regular ray hits
+	RNG rng;
 
   private:
     // NBVHAccel Private Methods
